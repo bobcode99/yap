@@ -179,6 +179,118 @@ yap dictate
 yap dictate > notes.txt
 ```
 
+### HTTP Server
+
+`yap serve` starts a local HTTP server that accepts audio URLs or raw audio uploads and returns transcripts asynchronously. Jobs are queued immediately and processed in the background — poll for the result when ready.
+
+```
+USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>]
+
+OPTIONS:
+  --host <host>           Host to bind to. (default: 127.0.0.1)
+  --port <port>           Port to listen on. (default: 8080)
+  --api-key <api-key>     If set, require X-API-Key header on all requests.
+  -h, --help              Show help information.
+```
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/locales` | List all supported transcription languages |
+| `POST` | `/transcriptions` | Submit a transcription job → `202` with job ID |
+| `GET` | `/transcriptions/{id}` | Poll job status and retrieve transcript |
+
+#### List supported languages
+
+```bash
+curl -s http://127.0.0.1:8080/locales | jq '.locales[] | select(.installed)'
+```
+
+Response:
+```json
+{
+  "locales": [
+    { "id": "en-US", "name": "English (United States)", "installed": true },
+    { "id": "fr-FR", "name": "French (France)",         "installed": false },
+    { "id": "zh-TW", "name": "Chinese (Taiwan)",        "installed": false }
+  ]
+}
+```
+
+`installed: true` means the language model is already on disk — transcription starts immediately. `installed: false` means the model will be downloaded on first use.
+
+#### Submit a job — URL mode
+
+Send a JSON body with the audio URL and any options:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/transcriptions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/audio.mp3",
+    "locale": "en-US",
+    "format": "srt"
+  }'
+# → {"id":"550e8400-e29b-41d4-a716","status":"queued"}
+```
+
+**Request fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | string | *required* | URL of the audio or video file to download and transcribe |
+| `locale` | string | system locale | BCP 47 locale identifier (e.g. `"en-US"`, `"fr-FR"`) |
+| `format` | string | `"srt"` | Output format: `txt`, `srt`, `vtt`, or `json` |
+| `censor` | bool | `false` | Replace certain words with a redacted form |
+| `max_length` | int | `40` | Maximum sentence length in characters for timed formats |
+| `word_timestamps` | bool | `false` | Include word-level timestamps (JSON format only) |
+
+#### Submit a job — file upload mode
+
+Send raw audio bytes with the appropriate `Content-Type`. Pass options as query parameters:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt&locale=en-US" \
+  -H "Content-Type: audio/mpeg" \
+  --data-binary @recording.mp3
+# → {"id":"550e8400-e29b-41d4-a716","status":"queued"}
+```
+
+Supported content types: `audio/mpeg`, `audio/wav`, `audio/mp4`, `video/mp4`, `audio/ogg`, `audio/flac`.
+
+#### Poll for results
+
+```bash
+curl -s http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
+# while running:  {"id":"…","status":"running"}
+# on completion:  {"id":"…","status":"done","format":"srt","transcript":"1\n00:00:01,000 --> …"}
+# on failure:     {"id":"…","status":"failed","error":"…"}
+```
+
+#### Examples
+
+```bash
+# Start the server
+yap serve
+
+# Start on a custom port with API key auth
+yap serve --port 9000 --api-key mysecret
+
+# With auth: pass the key in the header
+curl -s -X POST http://127.0.0.1:9000/transcriptions \
+  -H "X-API-Key: mysecret" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/podcast.mp3", "format": "txt"}'
+
+# Transcribe a YouTube video via the server
+yt-dlp "https://www.youtube.com/watch?v=ydejkIvyrJA" -x -o - | \
+  curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt" \
+  -H "Content-Type: audio/mpeg" \
+  --data-binary @-
+```
+
 ### MCP Server
 
 yap includes an [MCP](https://modelcontextprotocol.io) server that exposes a `transcribe` tool, allowing any MCP-compatible agent to transcribe audio and video files.
