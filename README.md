@@ -184,14 +184,28 @@ yap dictate > notes.txt
 `yap serve` starts a local HTTP server that accepts audio URLs or raw audio uploads and returns transcripts asynchronously. Jobs are queued immediately and processed in the background — poll for the result when ready.
 
 ```
-USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>]
+USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>] [--max-concurrent <max-concurrent>]
 
 OPTIONS:
-  --host <host>           Host to bind to. (default: 127.0.0.1)
-  --port <port>           Port to listen on. (default: 8080)
-  --api-key <api-key>     If set, require X-API-Key header on all requests.
-  -h, --help              Show help information.
+  --host <host>                     Host to bind to. (default: 127.0.0.1)
+  --port <port>                     Port to listen on. (default: 8080)
+  --api-key <api-key>               If set, require X-API-Key header on all requests.
+  --max-concurrent <max-concurrent> Maximum number of concurrent transcription jobs. (default: 2)
+  -h, --help                        Show help information.
 ```
+
+**Tuning `--max-concurrent`:**
+
+Jobs beyond the limit are queued in memory and processed as slots free up — clients always receive a `202` immediately. The right value depends on your hardware:
+
+| Hardware | Recommended |
+|----------|-------------|
+| M1 / M2 (base, 8 GB) | `2` |
+| M1 Pro / M2 Pro | `4` |
+| M3 / M4 Pro/Max | `4`–`6` |
+| Intel Mac | `1`–`2` |
+
+The Neural Engine (ANE) on Apple Silicon serializes inference internally, so raising this above 4–6 yields no throughput gain and increases memory pressure.
 
 #### Endpoints
 
@@ -277,6 +291,9 @@ yap serve
 
 # Start on a custom port with API key auth
 yap serve --port 9000 --api-key mysecret
+
+# Increase concurrency for a more powerful machine
+yap serve --max-concurrent 4
 
 # With auth: pass the key in the header
 curl -s -X POST http://127.0.0.1:9000/transcriptions \

@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import Hummingbird
 import Logging
+import Semaphore
 import Speech
 
 private let logger = Logger(label: "yap.serve")
@@ -47,9 +48,13 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "If set, require X-API-Key header on all non-health requests.")
     var apiKey: String?
 
+    @Option(name: .long, help: "Maximum number of concurrent transcription jobs (default: 2).")
+    var maxConcurrent: Int = 2
+
     mutating func run() async throws {
         let store = JobStore()
         let key = apiKey
+        let semaphore = AsyncSemaphore(value: maxConcurrent)
 
         let router = Router()
 
@@ -154,6 +159,8 @@ struct Serve: AsyncParsableCommand {
             logger.info("Job queued", metadata: ["job": "\(jobID)"])
 
             Task.detached {
+                await semaphore.wait()
+                defer { semaphore.signal() }
                 logger.info("Transcription started", metadata: ["job": "\(jobID)"])
                 await store.update(jobID, status: .running)
                 defer {
@@ -203,7 +210,7 @@ struct Serve: AsyncParsableCommand {
             router: router,
             configuration: .init(address: .hostname(host, port: port))
         )
-        logger.info("Server listening", metadata: ["host": "\(host)", "port": "\(port)"])
+        logger.info("Server listening", metadata: ["host": "\(host)", "port": "\(port)", "max-concurrent": "\(maxConcurrent)"])
         try await app.runService()
     }
 }
