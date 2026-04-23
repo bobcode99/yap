@@ -184,13 +184,14 @@ yap dictate > notes.txt
 `yap serve` starts a local HTTP server that accepts audio URLs or raw audio uploads and returns transcripts asynchronously. Jobs are queued immediately and processed in the background — poll for the result when ready.
 
 ```
-USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>] [--max-concurrent <max-concurrent>]
+USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>] [--max-concurrent <max-concurrent>] [--log-level <log-level>]
 
 OPTIONS:
   --host <host>                     Host to bind to. (default: 127.0.0.1)
   --port <port>                     Port to listen on. (default: 8080)
   --api-key <api-key>               If set, require X-API-Key header on all requests.
   --max-concurrent <max-concurrent> Maximum number of concurrent transcription jobs. (default: 2)
+  --log-level <log-level>           Log level: trace, debug, info, notice, warning, error, critical. (default: info)
   -h, --help                        Show help information.
 ```
 
@@ -207,6 +208,12 @@ Jobs beyond the limit are queued in memory and processed as slots free up — cl
 
 The Neural Engine (ANE) on Apple Silicon serializes inference internally, so raising this above 4–6 yields no throughput gain and increases memory pressure.
 
+#### Interactive API docs
+
+Once the server is running, open **`http://127.0.0.1:8080/docs`** in your browser for the full Swagger UI — try every endpoint directly from the browser.
+
+The raw OpenAPI spec is available at `http://127.0.0.1:8080/openapi.yaml`.
+
 #### Endpoints
 
 | Method | Path | Description |
@@ -215,6 +222,8 @@ The Neural Engine (ANE) on Apple Silicon serializes inference internally, so rai
 | `GET` | `/locales` | List all supported transcription languages |
 | `POST` | `/transcriptions` | Submit a transcription job → `202` with job ID |
 | `GET` | `/transcriptions/{id}` | Poll job status and retrieve transcript |
+| `GET` | `/openapi.yaml` | OpenAPI 3.1 spec |
+| `GET` | `/docs` | Swagger UI |
 
 #### List supported languages
 
@@ -278,10 +287,13 @@ Supported content types: `audio/mpeg`, `audio/wav`, `audio/mp4`, `video/mp4`, `a
 
 ```bash
 curl -s http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
-# while running:  {"id":"…","status":"running"}
-# on completion:  {"id":"…","status":"done","format":"srt","transcript":"1\n00:00:01,000 --> …"}
-# on failure:     {"id":"…","status":"failed","error":"…"}
+# queued:      {"id":"…","status":"queued"}
+# running:     {"id":"…","status":"running","progress":42}
+# done:        {"id":"…","status":"done","format":"srt","transcript":"1\n00:00:01,000 --> …"}
+# failed:      {"id":"…","status":"failed","error":"…"}
 ```
+
+`progress` is an integer 0–99 representing transcription completion. The response jumps directly from `running` to `done` — there is no `progress: 100`.
 
 #### Examples
 
