@@ -1,0 +1,154 @@
+{
+  "locales": [
+    {
+      "id": "de-AT",
+      "name": "Deutsch (Österreich)",
+      "installed": false
+    },
+    {
+      "id": "de-CH",
+      "name": "Deutsch (Schweiz)",
+      "installed": false
+    },
+    {
+      "id": "de-DE",
+      "name": "Deutsch (Deutschland)",
+      "installed": false
+    },
+    {
+      "id": "en-AU",
+      "name": "English (Australia)",
+      "installed": true
+    },
+    {
+      "id": "en-CA",
+      "name": "English (Canada)",
+      "installed": true
+    },
+    {
+      "id": "en-GB",
+      "name": "English (United Kingdom)",
+      "installed": true
+    },
+    {
+      "id": "en-IE",
+      "name": "English (Ireland)",
+      "installed": true
+    },
+    {
+      "id": "en-IN",
+      "name": "English (India)",
+      "installed": true
+    },
+    {
+      "id": "en-NZ",
+      "name": "English (New Zealand)",
+      "installed": true
+    },
+    {
+      "id": "en-SG",
+      "name": "English (Singapore)",
+      "installed": true
+    },
+    {
+      "id": "en-US",
+      "name": "English (United States)",
+      "installed": true
+    },
+    {
+      "id": "en-ZA",
+      "name": "English (South Africa)",
+      "installed": true
+    },
+    {
+      "id": "es-CL",
+      "name": "español (Chile)",
+      "installed": false
+    },
+    {
+      "id": "es-ES",
+      "name": "español (España)",
+      "installed": false
+    },
+    {
+      "id": "es-MX",
+      "name": "español (México)",
+      "installed": false
+    },
+    {
+      "id": "es-US",
+      "name": "español (Estados Unidos)",
+      "installed": false
+    },
+    {
+      "id": "fr-BE",
+      "name": "français (Belgique)",
+      "installed": false
+    },
+    {
+      "id": "fr-CA",
+      "name": "français (Canada)",
+      "installed": false
+    },
+    {
+      "id": "fr-CH",
+      "name": "français (Suisse)",
+      "installed": false
+    },
+    {
+      "id": "fr-FR",
+      "name": "français (France)",
+      "installed": false
+    },
+    {
+      "id": "it-CH",
+      "name": "italiano (Svizzera)",
+      "installed": false
+    },
+    {
+      "id": "it-IT",
+      "name": "italiano (Italia)",
+      "installed": false
+    },
+    {
+      "id": "ja-JP",
+      "name": "日本語（日本）",
+      "installed": false
+    },
+    {
+      "id": "ko-KR",
+      "name": "한국어(대한민국)",
+      "installed": false
+    },
+    {
+      "id": "pt-BR",
+      "name": "português (Brasil)",
+      "installed": false
+    },
+    {
+      "id": "pt-PT",
+      "name": "português (Portugal)",
+      "installed": false
+    },
+    {
+      "id": "yue-CN",
+      "name": "粤语（中国大陆）",
+      "installed": false
+    },
+    {
+      "id": "zh-CN",
+      "name": "中文（中国大陆）",
+      "installed": false
+    },
+    {
+      "id": "zh-HK",
+      "name": "中文（香港）",
+      "installed": false
+    },
+    {
+      "id": "zh-TW",
+      "name": "中文（台灣）",
+      "installed": false
+    }
+  ]
+}
