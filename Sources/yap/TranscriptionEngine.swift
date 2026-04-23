@@ -14,7 +14,8 @@ enum TranscriptionEngine {
 
     static func transcribe(
         file: URL,
-        options: Options = .init()
+        options: Options = .init(),
+        onProgress: (@Sendable (Double) async -> Void)? = nil
     ) async throws -> String {
         guard FileManager.default.fileExists(atPath: file.path) else {
             throw TranscriptionError.fileNotFound(file.path)
@@ -34,11 +35,12 @@ enum TranscriptionEngine {
         }
         try await AssetInventory.reserve(locale: options.locale)
 
+        let needsTimeRange = options.outputFormat.needsAudioTimeRange || onProgress != nil
         let transcriber = SpeechTranscriber(
             locale: options.locale,
             transcriptionOptions: options.censor ? [.etiquetteReplacements] : [],
             reportingOptions: [],
-            attributeOptions: options.outputFormat.needsAudioTimeRange ? [.audioTimeRange] : []
+            attributeOptions: needsTimeRange ? [.audioTimeRange] : []
         )
         let modules: [any SpeechModule] = [transcriber]
 
@@ -51,11 +53,33 @@ enum TranscriptionEngine {
 
         let analyzer = SpeechAnalyzer(modules: modules)
         let audioFile = try AVAudioFile(forReading: file)
+        let totalDuration = audioFile.processingFormat.sampleRate > 0
+            ? Double(audioFile.length) / audioFile.processingFormat.sampleRate
+            : 0
         try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
 
         var transcript: AttributedString = ""
+        var lastReportedTime: TimeInterval = 0
+        var lastProgressDate = Date.distantPast
+
         for try await result in transcriber.results {
             transcript += result.text
+
+            if let onProgress, totalDuration > 0 {
+                let now = Date()
+                guard now.timeIntervalSince(lastProgressDate) >= 0.5 else { continue }
+                for run in result.text.runs {
+                    if let timeRange = run.audioTimeRange {
+                        let currentTime = timeRange.end.seconds
+                        if currentTime > lastReportedTime {
+                            lastReportedTime = currentTime
+                            lastProgressDate = now
+                            await onProgress(min(currentTime / totalDuration, 0.99))
+                            break
+                        }
+                    }
+                }
+            }
         }
 
         return options.outputFormat.text(for: transcript, maxLength: options.maxLength, locale: options.locale, wordTimestamps: options.wordTimestamps)
