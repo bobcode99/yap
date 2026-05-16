@@ -79,6 +79,7 @@ struct YapAPI: APIProtocol {
 
         var options = TranscriptionEngine.Options()
         options.outputFormat = .srt
+        var jobName: String?
 
         let tmpFile: URL
 
@@ -89,6 +90,8 @@ struct YapAPI: APIProtocol {
                 return .badRequest(.init(body: .json(.init(error: "Invalid URL: \(req.url)"))))
             }
             applyRequestOptions(req, into: &options)
+            jobName = req.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "url", "url": "\(req.url)",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             log.info("Downloading audio", metadata: ["url": "\(sourceURL)"])
@@ -107,72 +110,132 @@ struct YapAPI: APIProtocol {
 
         case .audio_mpeg(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "audio/mpeg",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "mp3", log: log)
 
         case .audio_wav(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "audio/wav",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "wav", log: log)
 
         case .audio_mp4(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "audio/mp4",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "mp4", log: log)
 
         case .video_mp4(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "video/mp4",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "mp4", log: log)
 
         case .audio_ogg(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "audio/ogg",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "ogg", log: log)
 
         case .audio_flac(let body):
             applyQueryOptions(input.query, into: &options)
+            jobName = input.query.name
+            if let localeError = await unsupportedLocaleError(options.locale) { return localeError }
             log.info("Incoming request", metadata: ["mode": "upload", "content-type": "audio/flac",
                 "format": "\(options.outputFormat.rawValue)", "locale": "\(options.locale.identifier(.bcp47))"])
             tmpFile = try await streamToDisk(body: body, ext: "flac", log: log)
         }
 
         let jobID = UUID().uuidString
-        await store.create(jobID)
-        log.info("Job queued", metadata: ["job": "\(jobID)"])
+        await store.create(jobID, name: jobName)
 
-        Task.detached {
-            await semaphore.wait()
-            defer { semaphore.signal() }
-            log.info("Transcription started", metadata: ["job": "\(jobID)"])
-            await store.update(jobID, status: .running(progress: 0))
+        var acceptedMeta: Logger.Metadata = ["job": "\(jobID)"]
+        if let jobName { acceptedMeta["name"] = "\(jobName)" }
+        log.info("Job accepted", metadata: acceptedMeta)
+
+        let backgroundTask = Task.detached {
             defer {
                 try? FileManager.default.removeItem(at: tmpFile)
                 log.debug("Temp file removed", metadata: ["job": "\(jobID)", "file": "\(tmpFile.lastPathComponent)"])
             }
+
+            var _meta: Logger.Metadata = ["job": "\(jobID)"]
+            if let jobName { _meta["name"] = "\(jobName)" }
+            let meta = _meta
+
+            // Wait for a semaphore slot — throws CancellationError if cancelled while queued.
+            do {
+                try await semaphore.waitUnlessCancelled()
+            } catch {
+                await store.update(jobID, status: .cancelled)
+                log.info("Job cancelled while queued", metadata: meta)
+                return
+            }
+            defer { semaphore.signal() }
+
+            log.info("Transcription started", metadata: meta)
+            await store.update(jobID, status: .running(progress: 0))
+
             do {
                 let transcript = try await TranscriptionEngine.transcribe(
                     file: tmpFile,
                     options: options,
                     onProgress: { progress in
                         await store.update(jobID, status: .running(progress: progress))
-                        log.debug("Transcription progress", metadata: ["job": "\(jobID)", "progress": "\(Int(progress * 100))%"])
-                    }
+                        var progressMeta = meta
+                        progressMeta["progress"] = "\(Int(progress * 100))%"
+                        log.debug("Transcription progress", metadata: progressMeta)
+                    },
+                    log: log
                 )
+                // Guard against cancellation arriving just after transcription finishes.
+                try Task.checkCancellation()
                 await store.update(jobID, status: .done(transcript: transcript, format: options.outputFormat.rawValue))
-                log.info("Transcription complete", metadata: ["job": "\(jobID)", "format": "\(options.outputFormat.rawValue)"])
+                var doneMeta = meta
+                doneMeta["format"] = "\(options.outputFormat.rawValue)"
+                log.info("Transcription complete", metadata: doneMeta)
+            } catch is CancellationError {
+                await store.update(jobID, status: .cancelled)
+                log.info("Transcription cancelled", metadata: meta)
+            } catch let TranscriptionError.partialResult(transcript, covered, total, underlying) {
+                // Speech.framework died mid-stream — keep what we have.
+                try? Task.checkCancellation()
+                await store.update(jobID, status: .done(transcript: transcript, format: options.outputFormat.rawValue))
+                var partialMeta = meta
+                partialMeta["covered_s"] = "\(Int(covered))"
+                partialMeta["total_s"] = "\(Int(total))"
+                partialMeta["pct"] = "\(total > 0 ? Int(covered / total * 100) : 0)%"
+                partialMeta["underlying"] = "\(underlying.localizedDescription)"
+                log.warning("Transcription partial — Speech.framework gave up; returning what was processed", metadata: partialMeta)
             } catch {
-                await store.update(jobID, status: .failed(error.localizedDescription))
-                log.error("Transcription failed", metadata: ["job": "\(jobID)", "error": "\(error.localizedDescription)"])
+                let nsError = error as NSError
+                let detail = "\(error.localizedDescription) [\(nsError.domain) #\(nsError.code)]"
+                await store.update(jobID, status: .failed(detail))
+                var errMeta = meta
+                errMeta["error"] = "\(error.localizedDescription)"
+                errMeta["domain"] = "\(nsError.domain)"
+                errMeta["code"] = "\(nsError.code)"
+                errMeta["userInfo"] = "\(nsError.userInfo)"
+                errMeta["full"] = "\(error)"
+                log.error("Transcription failed", metadata: errMeta)
             }
-        }
 
-        return .accepted(.init(body: .json(.init(id: jobID, status: .queued))))
+            await store.removeTask(jobID)
+        }
+        await store.register(jobID, task: backgroundTask)
+
+        return .accepted(.init(body: .json(.init(id: jobID, name: jobName, status: .queued))))
     }
 
     // MARK: GET /transcriptions/{id}
@@ -189,16 +252,41 @@ struct YapAPI: APIProtocol {
             return .notFound(.init(body: .json(.init(error: "Job not found"))))
         }
 
+        let name = await store.getName(id)
+
         switch status {
         case .queued:
-            return .ok(.init(body: .json(.init(id: id, status: .queued))))
+            return .ok(.init(body: .json(.init(id: id, name: name, status: .queued))))
         case .running(let progress):
-            return .ok(.init(body: .json(.init(id: id, status: .running, progress: Int(progress * 100)))))
+            return .ok(.init(body: .json(.init(id: id, name: name, status: .running, progress: Int(progress * 100)))))
         case .done(let transcript, let format):
             let fmt = Components.Schemas.JobStatus.formatPayload(rawValue: format) ?? .txt
-            return .ok(.init(body: .json(.init(id: id, status: .done, format: fmt, transcript: transcript))))
+            return .ok(.init(body: .json(.init(id: id, name: name, status: .done, format: fmt, transcript: transcript))))
         case .failed(let message):
-            return .ok(.init(body: .json(.init(id: id, status: .failed, error: message))))
+            return .ok(.init(body: .json(.init(id: id, name: name, status: .failed, error: message))))
+        case .cancelled:
+            return .ok(.init(body: .json(.init(id: id, name: name, status: .cancelled))))
+        }
+    }
+
+    // MARK: DELETE /transcriptions/{id}
+
+    func cancelTranscription(_ input: Operations.cancelTranscription.Input) async throws -> Operations.cancelTranscription.Output {
+        if let key = apiKey {
+            guard APIKeyContext.value == key else {
+                return .unauthorized(.init(body: .json(.init(error: "Invalid API key"))))
+            }
+        }
+
+        let id = input.path.id
+        switch await store.cancel(id) {
+        case .cancelled:
+            log.info("Job cancelled by request", metadata: ["job": "\(id)"])
+            return .noContent(.init())
+        case .notFound:
+            return .notFound(.init(body: .json(.init(error: "Job not found"))))
+        case .alreadyTerminal:
+            return .conflict(.init(body: .json(.init(error: "Job is already complete and cannot be cancelled"))))
         }
     }
 }
@@ -240,6 +328,15 @@ private func applyQueryOptions(_ query: Operations.createTranscription.Input.Que
     if let censor = query.censor { options.censor = censor }
     if let maxLength = query.max_length { options.maxLength = maxLength }
     if let wt = query.word_timestamps { options.wordTimestamps = wt }
+}
+
+private func unsupportedLocaleError(_ locale: Locale) async -> Operations.createTranscription.Output? {
+    let bcp47 = locale.identifier(.bcp47)
+    let supported = await SpeechTranscriber.supportedLocales
+    guard supported.contains(where: { $0.identifier(.bcp47) == bcp47 }) else {
+        return .badRequest(.init(body: .json(.init(error: "Locale \"\(locale.identifier)\" is not supported for speech transcription."))))
+    }
+    return nil
 }
 
 private func mapFormat(_ string: String) -> OutputFormat {
