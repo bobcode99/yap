@@ -59,6 +59,7 @@ paths:
         - {}
         - apiKey: []
       parameters:
+        - $ref: "#/components/parameters/name"
         - $ref: "#/components/parameters/format"
         - $ref: "#/components/parameters/locale"
         - $ref: "#/components/parameters/censor"
@@ -131,6 +132,31 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+    delete:
+      summary: Cancel a transcription job
+      description: |
+        Cancel a queued or running job. The job must be in `queued` or `running`
+        state — returns `409 Conflict` if it has already finished or been cancelled.
+      operationId: cancelTranscription
+      security:
+        - {}
+        - apiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Job cancelled successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
 components:
   securitySchemes:
     apiKey:
@@ -140,6 +166,12 @@ components:
       description: Pass via --api-key when starting yap serve
 
   parameters:
+    name:
+      name: name
+      in: query
+      description: Human-readable label for the job (e.g. podcast episode title)
+      schema:
+        type: string
     format:
       name: format
       in: query
@@ -191,6 +223,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Job is already in a terminal state (done, failed, or cancelled)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
     HealthResponse:
@@ -234,6 +272,10 @@ components:
           type: string
           description: URL of the audio or video file to download and transcribe
           example: https://example.com/audio.mp3
+        name:
+          type: string
+          description: Human-readable label for the job (e.g. podcast episode title)
+          example: "Episode 42: Deep Dive into Swift Concurrency"
         locale:
           type: string
           example: en-US
@@ -253,9 +295,12 @@ components:
       properties:
         id:
           type: string
+        name:
+          type: string
+          description: Human-readable label supplied at submission time, if any
         status:
           type: string
-          enum: [queued, running, done, failed]
+          enum: [queued, running, done, failed, cancelled]
         progress:
           type: integer
           minimum: 0

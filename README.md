@@ -222,6 +222,7 @@ The raw OpenAPI spec is available at `http://127.0.0.1:8080/openapi.yaml`.
 | `GET` | `/locales` | List all supported transcription languages |
 | `POST` | `/transcriptions` | Submit a transcription job → `202` with job ID |
 | `GET` | `/transcriptions/{id}` | Poll job status and retrieve transcript |
+| `DELETE` | `/transcriptions/{id}` | Cancel a queued or running job |
 | `GET` | `/openapi.yaml` | OpenAPI 3.1 spec |
 | `GET` | `/docs` | Swagger UI |
 
@@ -264,6 +265,7 @@ curl -s -X POST http://127.0.0.1:8080/transcriptions \
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | string | *required* | URL of the audio or video file to download and transcribe |
+| `name` | string | — | Human-readable label for the job (e.g. podcast episode title) |
 | `locale` | string | system locale | BCP 47 locale identifier (e.g. `"en-US"`, `"fr-FR"`) |
 | `format` | string | `"srt"` | Output format: `txt`, `srt`, `vtt`, or `json` |
 | `censor` | bool | `false` | Replace certain words with a redacted form |
@@ -275,10 +277,10 @@ curl -s -X POST http://127.0.0.1:8080/transcriptions \
 Send raw audio bytes with the appropriate `Content-Type`. Pass options as query parameters:
 
 ```bash
-curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt&locale=en-US" \
+curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt&locale=en-US&name=Episode+42" \
   -H "Content-Type: audio/mpeg" \
   --data-binary @recording.mp3
-# → {"id":"550e8400-e29b-41d4-a716","status":"queued"}
+# → {"id":"550e8400-e29b-41d4-a716","name":"Episode 42","status":"queued"}
 ```
 
 Supported content types: `audio/mpeg`, `audio/wav`, `audio/mp4`, `video/mp4`, `audio/ogg`, `audio/flac`.
@@ -291,9 +293,26 @@ curl -s http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
 # running:     {"id":"…","status":"running","progress":42}
 # done:        {"id":"…","status":"done","format":"srt","transcript":"1\n00:00:01,000 --> …"}
 # failed:      {"id":"…","status":"failed","error":"…"}
+# cancelled:   {"id":"…","status":"cancelled"}
 ```
 
 `progress` is an integer 0–99 representing transcription completion. The response jumps directly from `running` to `done` — there is no `progress: 100`.
+
+The `name` field is echoed back in every response if it was set at submission time.
+
+#### Cancel a job
+
+Cancel any job that is still `queued` or `running`. Returns `204` on success, `404` if the job doesn't exist, and `409` if the job has already finished or been cancelled.
+
+```bash
+# Cancel a job (e.g. wrong language selected)
+curl -s -X DELETE http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
+# → 204 No Content
+
+# Already done or cancelled → 409
+curl -s -X DELETE http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
+# → {"error":"Job is already complete and cannot be cancelled"}
+```
 
 #### Examples
 
