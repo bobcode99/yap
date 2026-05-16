@@ -14,13 +14,47 @@ actor JobStore: Sendable {
         case running(progress: Double)
         case done(transcript: String, format: String)
         case failed(String)
+        case cancelled
     }
 
-    private var jobs: [String: Status] = [:]
+    enum CancelResult { case cancelled, notFound, alreadyTerminal }
 
-    func create(_ id: String) { jobs[id] = .queued }
-    func update(_ id: String, status: Status) { jobs[id] = status }
+    private var jobs: [String: Status] = [:]
+    private var tasks: [String: Task<Void, Never>] = [:]
+    private var names: [String: String] = [:]
+
+    func create(_ id: String, name: String? = nil) {
+        jobs[id] = .queued
+        if let name { names[id] = name }
+    }
+
+    func getName(_ id: String) -> String? { names[id] }
+
+    /// Update status. Ignored if the job is already cancelled (prevents a late
+    /// background update from overwriting the canonical cancelled state).
+    func update(_ id: String, status: Status) {
+        guard let current = jobs[id] else { return }
+        if case .cancelled = current { return }
+        jobs[id] = status
+    }
+
     func get(_ id: String) -> Status? { jobs[id] }
+
+    func register(_ id: String, task: Task<Void, Never>) { tasks[id] = task }
+    func removeTask(_ id: String) { tasks[id] = nil }
+
+    func cancel(_ id: String) -> CancelResult {
+        guard let status = jobs[id] else { return .notFound }
+        switch status {
+        case .queued, .running:
+            tasks[id]?.cancel()
+            tasks[id] = nil
+            jobs[id] = .cancelled
+            return .cancelled
+        case .done, .failed, .cancelled:
+            return .alreadyTerminal
+        }
+    }
 }
 
 // MARK: - Serve
@@ -55,7 +89,6 @@ struct Serve: AsyncParsableCommand {
         let store = JobStore()
         let semaphore = AsyncSemaphore(value: maxConcurrent)
         let key = apiKey
-        let serverPort = port
 
         let router = Router()
 
@@ -73,11 +106,8 @@ struct Serve: AsyncParsableCommand {
             )
         }
 
-        router.get("/docs") { request, _ -> Response in
-            let uriHost = request.uri.host ?? "127.0.0.1"
-            let uriPort = request.uri.port ?? serverPort
-            let scheme = request.headers[.init("X-Forwarded-Proto")!] ?? "http"
-            let html = swaggerUIHTML(specURL: "\(scheme)://\(uriHost):\(uriPort)/openapi.yaml", title: "yap API")
+        router.get("/docs") { _, _ -> Response in
+            let html = swaggerUIHTML(specURL: "/openapi.yaml", title: "yap API")
             return Response(
                 status: .ok,
                 headers: [.contentType: "text/html; charset=utf-8"],
