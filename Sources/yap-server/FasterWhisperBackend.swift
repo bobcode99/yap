@@ -41,7 +41,7 @@ struct FasterWhisperBackend: TranscriptionBackend {
         if options.languageCode != "auto" { args += ["--language", options.languageCode] }
         if options.wordTimestamps { args.append("--word-timestamps") }
 
-        let result = try await ProcessRunner.run(python, args)
+        let result = try await ProcessRunner.run(python, args, onProgress: options.onProgress)
         guard result.exitCode == 0 else {
             throw BackendError.executionFailed(command: "faster-whisper", detail: errorDetail(result))
         }

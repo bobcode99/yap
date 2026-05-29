@@ -37,7 +37,8 @@ struct WhisperCppBackend: TranscriptionBackend {
         }
         if options.wordTimestamps { args.append("-ojf") }
 
-        let result = try await ProcessRunner.run(binary, args)
+        args.append("--print-progress")
+        let result = try await ProcessRunner.run(binary, args, onProgress: options.onProgress)
         guard result.exitCode == 0 else {
             throw BackendError.executionFailed(command: "whisper-cli", detail: errorDetail(result))
         }

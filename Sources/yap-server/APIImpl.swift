@@ -33,7 +33,7 @@ struct APIImpl: APIProtocol {
         }
 
         let backendID: String?
-        let options: TranscriptionOptions
+        var options: TranscriptionOptions
         let name: String?
         let tmpFile: URL
 
@@ -73,6 +73,7 @@ struct APIImpl: APIProtocol {
         let jobID = UUID().uuidString
         await store.create(jobID, name: name, backend: backend.id)
         logger.info("job accepted", metadata: ["job": "\(jobID)", "backend": "\(backend.id)"])
+        options.onProgress = { @Sendable pct in Task { await store.updateProgress(jobID, progress: pct) } }
 
         let task = Task.detached { [store, semaphore, logger] in
             defer { try? FileManager.default.removeItem(at: tmpFile) }
@@ -167,7 +168,7 @@ struct APIImpl: APIProtocol {
         case .queued:
             return .init(id: id, name: job.name, status: "queued", backend: job.backend)
         case .running:
-            return .init(id: id, name: job.name, status: "running", backend: job.backend)
+            return .init(id: id, name: job.name, status: "running", backend: job.backend, progress: job.progress)
         case let .done(transcript, format):
             return .init(id: id, name: job.name, status: "done", backend: job.backend, format: format, transcript: transcript)
         case let .failed(message):

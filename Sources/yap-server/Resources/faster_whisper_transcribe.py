@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from faster_whisper import WhisperModel
 
 
@@ -61,7 +62,9 @@ def main():
         "segments": [],
     }
 
+    total = max(len(materialized), 1)
     for index, segment in enumerate(materialized, start=1):
+        print(f"progress={min(100, int(index / total * 100))}", file=sys.stderr, flush=True)
         item = {
             "id": index,
             "start": segment.start,
