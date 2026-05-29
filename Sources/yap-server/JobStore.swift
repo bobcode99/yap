@@ -15,6 +15,7 @@ actor JobStore {
         var status: Status
         var name: String?
         var backend: String
+        var progress: Int?
     }
 
     private var jobs: [String: Job] = [:]
@@ -32,6 +33,12 @@ actor JobStore {
         guard var job = jobs[id] else { return }
         if case .cancelled = job.status { return }
         job.status = status
+        jobs[id] = job
+    }
+
+    func updateProgress(_ id: String, progress: Int) {
+        guard var job = jobs[id], case .running = job.status else { return }
+        job.progress = progress
         jobs[id] = job
     }
 
