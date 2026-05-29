@@ -6,7 +6,8 @@ let package = Package(
     name: "yap",
     platforms: [.macOS("26")],
     products: [
-        .executable(name: "yap", targets: ["yap"])
+        .executable(name: "yap", targets: ["yap"]),
+        .executable(name: "yap-server", targets: ["yap-server"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.2.0"),
@@ -25,17 +26,24 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Noora", package: "Noora"),
                 .product(name: "MCP", package: "swift-sdk"),
+            ]
+        ),
+        .executableTarget(
+            name: "yap-server",
+            dependencies: [
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "Semaphore", package: "Semaphore"),
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
                 .product(name: "OpenAPIHummingbird", package: "swift-openapi-hummingbird"),
             ],
             resources: [
-                .copy("openapi.yaml")
+                .copy("Resources/faster_whisper_transcribe.py"),
+                .copy("openapi.yaml"),
             ],
             plugins: [
-                .plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")
+                .plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator"),
             ]
-        )
+        ),
     ]
 )

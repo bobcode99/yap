@@ -1,13 +1,31 @@
 # 🗣️ yap
 
-A CLI for on-device speech transcription using [Speech.framework](https://developer.apple.com/documentation/speech) on macOS 26.
+On-device speech transcription, shipped as two binaries:
+
+- **`yap`** — a focused macOS CLI built on [Speech.framework](https://developer.apple.com/documentation/speech). File transcription (`transcribe`), live capture (`listen`, `dictate`, `listen-and-dictate`), an MCP server (`mcp`), and an optional music-detection pass that marks `[Music]` ranges in timed output.
+- **`yap-server`** — a cross-platform HTTP server that queues transcription jobs and runs them through pluggable backends. It never links Apple frameworks; it shells out to transcription tools as subprocesses:
+  - `apple-speech` → the `yap` CLI (macOS only)
+  - `whisper-cpp` → whisper.cpp's `whisper-cli`
+  - `faster-whisper` → the bundled Python wrapper
+
+The server registers whichever backends are available on the host, so macOS can offer all three while Linux/Windows offer the whisper backends.
+
+## Build
+
+```bash
+# macOS — builds both `yap` and `yap-server`
+swift build -c release
+
+# Linux / Windows — the `yap` CLI needs Speech.framework, so build the server only
+swift build -c release --product yap-server
+```
 
 ![Demo](https://github.com/user-attachments/assets/326de51d-5a58-4c96-9d6c-98b07e6d9e58)
 
 ### Usage
 
 ```
-USAGE: yap transcribe [--locale <locale>] [--censor] <input-file> [--txt] [--srt] [--vtt] [--json] [--output-file <output-file>] [--max-length <max-length>] [--word-timestamps]
+USAGE: yap transcribe [--locale <locale>] [--censor] <input-file> [--txt] [--srt] [--vtt] [--json] [--output-file <output-file>] [--max-length <max-length>] [--word-timestamps] [--detect-music] [--no-detect-music]
 
 ARGUMENTS:
   <input-file>            Path to an audio or video file to transcribe.
@@ -23,8 +41,25 @@ OPTIONS:
   -m, --max-length <max-length>
                           Maximum sentence length in characters. (default: 40)
   --word-timestamps       Include word-level timestamps in JSON output.
+  --detect-music/--no-detect-music
+                          Mark detected music ranges as [Music] in timed output
+                          formats (SRT, VTT, JSON). (default: --detect-music)
   -h, --help              Show help information.
 ```
+
+### Music detection
+
+By default `yap transcribe` runs a [SoundAnalysis](https://developer.apple.com/documentation/soundanalysis) pre-pass that detects music/singing ranges. In timed formats (SRT, VTT, JSON) those ranges replace any (usually garbled) speech segments with a `[Music]` marker. Plain text output is unaffected. Pass `--no-detect-music` to skip the pass.
+
+```bash
+# SRT with [Music] markers over the musical intro/outro
+yap transcribe podcast.mp3 --srt -o podcast.srt
+
+# Disable music detection
+yap transcribe interview.wav --srt --no-detect-music -o interview.srt
+```
+
+> Use whisper.cpp or faster-whisper through **`yap-server`** (see below), not the CLI — the CLI is Apple Speech only.
 
 ### Installation
 
@@ -181,69 +216,55 @@ yap dictate > notes.txt
 
 ### HTTP Server
 
-`yap serve` starts a local HTTP server that accepts audio URLs or raw audio uploads and returns transcripts asynchronously. Jobs are queued immediately and processed in the background — poll for the result when ready.
+`yap-server` is a cross-platform HTTP server that accepts audio URLs or raw audio uploads and returns transcripts asynchronously. Jobs are queued immediately and processed in the background — poll for the result when ready. Each job picks a backend (`apple-speech`, `whisper-cpp`, or `faster-whisper`); the server runs it as a subprocess.
+
+At startup the server probes for each backend's binary/model and registers the ones it finds. On macOS with `yap` on PATH you get `apple-speech`; add a whisper model to enable the whisper backends; on Linux/Windows you get whatever whisper backends you configure.
 
 ```
-USAGE: yap serve [--host <host>] [--port <port>] [--api-key <api-key>] [--max-concurrent <max-concurrent>] [--log-level <log-level>]
+USAGE: yap-server [--host <host>] [--port <port>] [--api-key <api-key>] [--max-concurrent <max-concurrent>] [--default-backend <default-backend>] [--yap-bin <yap-bin>] [--whisper-cli-bin <whisper-cli-bin>] [--whisper-model <whisper-model>] [--faster-whisper-python <faster-whisper-python>] [--faster-whisper-model <faster-whisper-model>] [--faster-whisper-device <faster-whisper-device>] [--faster-whisper-compute-type <faster-whisper-compute-type>]
 
 OPTIONS:
   --host <host>                     Host to bind to. (default: 127.0.0.1)
   --port <port>                     Port to listen on. (default: 8080)
-  --api-key <api-key>               If set, require X-API-Key header on all requests.
+  --api-key <api-key>               If set, require X-API-Key header on all non-health requests.
   --max-concurrent <max-concurrent> Maximum number of concurrent transcription jobs. (default: 2)
-  --log-level <log-level>           Log level: trace, debug, info, notice, warning, error, critical. (default: info)
+  --default-backend <default-backend>
+                                    Backend used when a request omits one.
+  --yap-bin <yap-bin>               Path to the yap CLI (apple-speech). Looked up on PATH by default.
+  --whisper-cli-bin <whisper-cli-bin>
+                                    Path to whisper.cpp's whisper-cli. ($YAP_WHISPER_CLI_BIN)
+  --whisper-model <whisper-model>   whisper.cpp model file — required to enable whisper-cpp. ($YAP_WHISPER_MODEL)
+  --faster-whisper-python <faster-whisper-python>
+                                    Python executable for the bundled wrapper. ($YAP_FASTER_WHISPER_PYTHON)
+  --faster-whisper-model <faster-whisper-model>
+                                    faster-whisper model — required to enable faster-whisper. ($YAP_FASTER_WHISPER_MODEL)
+  --faster-whisper-device <faster-whisper-device>
+                                    faster-whisper device, e.g. auto, cpu, cuda. (default: auto)
+  --faster-whisper-compute-type <faster-whisper-compute-type>
+                                    faster-whisper compute type, e.g. default, int8, float16. (default: default)
   -h, --help                        Show help information.
 ```
 
 **Tuning `--max-concurrent`:**
 
-Jobs beyond the limit are queued in memory and processed as slots free up — clients always receive a `202` immediately. The right value depends on your hardware:
-
-| Hardware | Recommended |
-|----------|-------------|
-| M1 / M2 (base, 8 GB) | `2` |
-| M1 Pro / M2 Pro | `4` |
-| M3 / M4 Pro/Max | `4`–`6` |
-| Intel Mac | `1`–`2` |
-
-The Neural Engine (ANE) on Apple Silicon serializes inference internally, so raising this above 4–6 yields no throughput gain and increases memory pressure.
-
-#### Interactive API docs
-
-Once the server is running, open **`http://127.0.0.1:8080/docs`** in your browser for the full Swagger UI — try every endpoint directly from the browser.
-
-The raw OpenAPI spec is available at `http://127.0.0.1:8080/openapi.yaml`.
+Jobs beyond the limit are queued in memory and processed as slots free up — clients always receive a `202` immediately. The right value depends on your hardware and backend; for Apple Speech on Apple Silicon the Neural Engine serializes inference internally, so `2`–`6` is the useful range.
 
 #### Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `GET` | `/locales` | List all supported transcription languages |
+| `GET` | `/backends` | List registered backends and the default |
 | `POST` | `/transcriptions` | Submit a transcription job → `202` with job ID |
 | `GET` | `/transcriptions/{id}` | Poll job status and retrieve transcript |
 | `DELETE` | `/transcriptions/{id}` | Cancel a queued or running job |
-| `GET` | `/openapi.yaml` | OpenAPI 3.1 spec |
-| `GET` | `/docs` | Swagger UI |
 
-#### List supported languages
+#### List backends
 
 ```bash
-curl -s http://127.0.0.1:8080/locales | jq '.locales[] | select(.installed)'
+curl -s http://127.0.0.1:8080/backends
+# → {"backends":["apple-speech"],"default":"apple-speech"}
 ```
-
-Response:
-```json
-{
-  "locales": [
-    { "id": "en-US", "name": "English (United States)", "installed": true },
-    { "id": "fr-FR", "name": "French (France)",         "installed": false },
-    { "id": "zh-TW", "name": "Chinese (Taiwan)",        "installed": false }
-  ]
-}
-```
-
-`installed: true` means the language model is already on disk — transcription starts immediately. `installed: false` means the model will be downloaded on first use.
 
 #### Submit a job — URL mode
 
@@ -254,10 +275,11 @@ curl -s -X POST http://127.0.0.1:8080/transcriptions \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com/audio.mp3",
+    "backend": "whisper-cpp",
     "locale": "en-US",
     "format": "srt"
   }'
-# → {"id":"550e8400-e29b-41d4-a716","status":"queued"}
+# → {"id":"550e8400-…","status":"queued","backend":"whisper-cpp"}
 ```
 
 **Request fields:**
@@ -265,22 +287,24 @@ curl -s -X POST http://127.0.0.1:8080/transcriptions \
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | string | *required* | URL of the audio or video file to download and transcribe |
-| `name` | string | — | Human-readable label for the job (e.g. podcast episode title) |
-| `locale` | string | system locale | BCP 47 locale identifier (e.g. `"en-US"`, `"fr-FR"`) |
+| `name` | string | — | Human-readable label for the job |
+| `backend` | string | server default | `apple-speech`, `whisper-cpp`, or `faster-whisper` (must be registered) |
+| `locale` | string | system locale | BCP 47 locale identifier; whisper backends use the language part |
 | `format` | string | `"srt"` | Output format: `txt`, `srt`, `vtt`, or `json` |
-| `censor` | bool | `false` | Replace certain words with a redacted form |
+| `censor` | bool | `false` | Replace certain words with a redacted form (apple-speech) |
 | `max_length` | int | `40` | Maximum sentence length in characters for timed formats |
 | `word_timestamps` | bool | `false` | Include word-level timestamps (JSON format only) |
+| `detect_music` | bool | `true` | Mark music ranges as `[Music]` (apple-speech only) |
 
 #### Submit a job — file upload mode
 
-Send raw audio bytes with the appropriate `Content-Type`. Pass options as query parameters:
+Send raw audio bytes with the appropriate `Content-Type`. Pass options as query parameters (same names as the JSON fields):
 
 ```bash
-curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt&locale=en-US&name=Episode+42" \
+curl -s -X POST "http://127.0.0.1:8080/transcriptions?format=srt&backend=apple-speech&name=Episode+42" \
   -H "Content-Type: audio/mpeg" \
   --data-binary @recording.mp3
-# → {"id":"550e8400-e29b-41d4-a716","name":"Episode 42","status":"queued"}
+# → {"id":"550e8400-…","name":"Episode 42","status":"queued","backend":"apple-speech"}
 ```
 
 Supported content types: `audio/mpeg`, `audio/wav`, `audio/mp4`, `video/mp4`, `audio/ogg`, `audio/flac`.
@@ -288,45 +312,44 @@ Supported content types: `audio/mpeg`, `audio/wav`, `audio/mp4`, `video/mp4`, `a
 #### Poll for results
 
 ```bash
-curl -s http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
-# queued:      {"id":"…","status":"queued"}
-# running:     {"id":"…","status":"running","progress":42}
-# done:        {"id":"…","status":"done","format":"srt","transcript":"1\n00:00:01,000 --> …"}
-# failed:      {"id":"…","status":"failed","error":"…"}
-# cancelled:   {"id":"…","status":"cancelled"}
+curl -s http://127.0.0.1:8080/transcriptions/550e8400-…
+# queued:    {"id":"…","status":"queued","backend":"apple-speech"}
+# running:   {"id":"…","status":"running","backend":"apple-speech"}
+# done:      {"id":"…","status":"done","backend":"apple-speech","format":"srt","transcript":"1\n00:00:01,000 --> …"}
+# failed:    {"id":"…","status":"failed","backend":"apple-speech","error":"…"}
+# cancelled: {"id":"…","status":"cancelled","backend":"apple-speech"}
 ```
 
-`progress` is an integer 0–99 representing transcription completion. The response jumps directly from `running` to `done` — there is no `progress: 100`.
-
-The `name` field is echoed back in every response if it was set at submission time.
+Status is coarse — `queued → running → done|failed|cancelled` — with no progress percentage, since each backend runs as an opaque subprocess. The `name` field is echoed back when it was set at submission time.
 
 #### Cancel a job
 
-Cancel any job that is still `queued` or `running`. Returns `204` on success, `404` if the job doesn't exist, and `409` if the job has already finished or been cancelled.
+Cancel any job that is still `queued` or `running`. Returns `204` on success, `404` if the job doesn't exist, and `409` if it has already finished or been cancelled.
 
 ```bash
-# Cancel a job (e.g. wrong language selected)
-curl -s -X DELETE http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
+curl -s -X DELETE http://127.0.0.1:8080/transcriptions/550e8400-…
 # → 204 No Content
-
-# Already done or cancelled → 409
-curl -s -X DELETE http://127.0.0.1:8080/transcriptions/550e8400-e29b-41d4-a716
-# → {"error":"Job is already complete and cannot be cancelled"}
 ```
 
 #### Examples
 
 ```bash
-# Start the server
-yap serve
+# macOS — apple-speech via the freshly built CLI
+yap-server --yap-bin "$(pwd)/.build/release/yap"
 
-# Start on a custom port with API key auth
-yap serve --port 9000 --api-key mysecret
+# whisper.cpp backend
+yap-server --whisper-cli-bin /opt/whisper.cpp/build/bin/whisper-cli \
+           --whisper-model /models/ggml-base.en.bin
 
-# Increase concurrency for a more powerful machine
-yap serve --max-concurrent 4
+# faster-whisper backend (Linux/Windows friendly)
+pip install faster-whisper
+yap-server --faster-whisper-model small --faster-whisper-device cpu
 
-# With auth: pass the key in the header
+# Multiple backends at once; pick per request with the "backend" field
+yap-server --yap-bin yap --whisper-model /models/ggml-base.en.bin --default-backend apple-speech
+
+# Custom port with API key auth
+yap-server --port 9000 --api-key mysecret
 curl -s -X POST http://127.0.0.1:9000/transcriptions \
   -H "X-API-Key: mysecret" \
   -H "Content-Type: application/json" \
