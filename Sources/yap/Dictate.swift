@@ -1,3 +1,4 @@
+#if os(macOS)
 import ArgumentParser
 @preconcurrency import AVFoundation
 @preconcurrency import Noora
@@ -213,3 +214,4 @@ enum DictateError: Swift.Error, LocalizedError {
         }
     }
 }
+#endif

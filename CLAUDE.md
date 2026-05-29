@@ -1,95 +1,115 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+# Project: yap
+
+Two executable targets in one package:
+
+- **`yap`** — macOS-only CLI. Apple Speech transcription (`Speech.framework`) plus a SoundAnalysis music-detection pass. Subcommands: `transcribe`, `listen`, `dictate`, `listen-and-dictate`, `mcp`. Has no networking or whisper code.
+- **`yap-server`** — cross-platform HTTP server (Hummingbird). Owns the job queue, concurrency gating, and multi-backend routing. It transcribes by spawning **subprocesses**, never by linking `Speech`:
+  - `apple-speech` → spawns the `yap` CLI (macOS only; probe fails elsewhere)
+  - `whisper-cpp` → spawns `whisper-cli`
+  - `faster-whisper` → spawns the bundled Python wrapper
+  Each backend is probed at startup; only those whose binary/model resolve get registered.
 
 ## Build & Run
 
 ```bash
-swift build                          # debug build
-swift build -c release               # release build
-swift run yap <subcommand> [flags]   # run directly
+# macOS — builds both targets
+swift build
+swift run yap transcribe audio.mp3 --srt
+swift run yap-server --yap-bin "$(pwd)/.build/debug/yap"
 
-# HTTP server (for serve development)
-swift run yap serve --host 0.0.0.0 --log-level debug
+# Linux / Windows — yap target can't compile (Speech.framework), build the server only
+swift build --product yap-server
 ```
+
+The `apple-speech` backend uses whatever `yap` resolves on PATH unless `--yap-bin` points elsewhere. To exercise the freshly built CLI, pass `--yap-bin "$(pwd)/.build/debug/yap"`.
 
 ## Validate After Every Change
 
-Run these three checks after any code change before committing:
-
 ```bash
-# 1. Build must be clean (no errors, no warnings treated as errors)
+# 1. Build clean (no warnings)
 swift build
 
-# 2. Server smoke test — start, hit all critical endpoints, kill
-.build/debug/yap serve --port 8099 &
+# 2. Server smoke test
+.build/debug/yap-server --port 8099 &
 SERVER_PID=$!
 sleep 2
-curl -sf http://127.0.0.1:8099/health         # must return {"status":"ok"}
-curl -sf http://127.0.0.1:8099/openapi.yaml | head -1   # must return "openapi:"
-curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8099/docs  # must return 200
+curl -sf http://127.0.0.1:8099/health      # {"status":"ok"}
+curl -sf http://127.0.0.1:8099/backends     # lists registered backends + default
 kill $SERVER_PID
-
-# 3. OpenAPI spec must be valid YAML
-python3 -c "import yaml, sys; yaml.safe_load(open('Sources/yap/openapi.yaml'))" && echo "spec OK"
 ```
 
-## Architecture
+## Endpoints
 
-Single executable target (`Sources/yap/`) with these layers:
+`GET /health`, `GET /backends`, `POST /transcriptions` (JSON `{url,...}` or raw audio upload with query params), `GET /transcriptions/{id}`, `DELETE /transcriptions/{id}`. Job status is coarse: `queued → running → done|failed|cancelled` (no progress percentage — the subprocess contract doesn't stream progress).
 
-### CLI Commands (`Yap.swift`)
-Six subcommands registered with `ArgumentParser`: `transcribe`, `listen`, `dictate`, `listen-and-dictate`, `mcp`, `serve`. All are `AsyncParsableCommand`.
+## Adding a backend
 
-### Core Transcription (`TranscriptionEngine.swift`)
-Wraps Apple's `Speech.framework` (`SpeechTranscriber` + `SpeechAnalyzer`). The single entry point is:
-```swift
-TranscriptionEngine.transcribe(file:options:onProgress:)
-```
-- Downloads language models on first use via `AssetInventory`
-- `onProgress` callback receives 0.0–0.99; enables real-time progress for `yap serve`
-- Requires macOS 26 (`SpeechTranscriber` API)
-
-### Output Formats (`OutputFormat.swift`)
-`OutputFormat` enum handles both **buffered** (file transcription) and **streaming** (live commands) rendering for `txt`, `srt`, `vtt`, `json`. Segment splitting uses `AttributedString` runs with `.audioTimeRange` attributes.
-
-### HTTP Server (`Serve.swift` + `APIImpl.swift`)
-
-**Spec-first OpenAPI flow:**
-1. Edit `Sources/yap/openapi.yaml` — this is the single source of truth
-2. `swift-openapi-generator` build plugin auto-generates `Types.swift` + `Server.swift` into `.build/plugins/outputs/`
-3. `YapAPI` in `APIImpl.swift` implements the generated `APIProtocol`
-4. `Serve.swift` calls `api.registerHandlers(on: router)` — two manual routes (`/openapi.yaml`, `/docs`) are added separately
-
-**Never manually edit the generated files** in `.build/plugins/outputs/`.
-
-**Job lifecycle:**
-```
-POST /transcriptions → JobStore.create() → Task.detached (waits on AsyncSemaphore)
-                     → TranscriptionEngine.transcribe() with onProgress callback
-                     → JobStore.update(.running(progress:)) on each tick
-                     → JobStore.update(.done / .failed) on completion
-GET /transcriptions/{id} → polls JobStore
-```
-
-**API key auth** flows via `APIKeyMiddleware` → `APIKeyContext` (`@TaskLocal`) → checked in each `YapAPI` method. `/health`, `/openapi.yaml`, `/docs` skip the check.
-
-**Concurrency:** `AsyncSemaphore(value: maxConcurrent)` (default 2) gates `Task.detached` workers. Upload bodies stream directly to a temp file (no RAM buffering) to avoid 413 on large files.
-
-### MCP Server (`MCP.swift`)
-Exposes a `transcribe` tool over the Model Context Protocol using `swift-sdk`. Labeled parameter syntax required: `.text(text:annotations:_meta:)`.
-
-## Key Constraints
-
-- **Platform**: macOS 26 only — `SpeechTranscriber` is unavailable on earlier versions
-- **Swift 6.1 strict concurrency**: all shared state must be `actor`-isolated or `Sendable`. `@TaskLocal` is the approved pattern for passing request-scoped values into async contexts
-- **`swift-sdk` version**: pinned to `.upToNextMinor(from: "0.12.0")` — earlier versions have unresolved strict concurrency errors in `NetworkTransport.swift`
-- **`openapi.yaml` + `openapi-generator-config.yaml`** must both exist in `Sources/yap/` for the build plugin to run
-
-## OpenAPI Spec Changes
-
-When adding or modifying endpoints:
-1. Edit `Sources/yap/openapi.yaml`
-2. Run `swift build` — the plugin regenerates the types
-3. Implement any new protocol methods in `APIImpl.swift` (the compiler will error on missing conformance)
-4. Run the smoke test above to confirm `/openapi.yaml` serves the updated spec
+Implement `TranscriptionBackend` (`Sources/yap-server/Backend.swift`) with a `probe(...) -> Self?` that returns nil when its binary/model is missing, then register it in `YapServer.buildRegistry`. Keep transcription logic in the spawned tool, not in the server.

@@ -1,3 +1,4 @@
+#if os(macOS)
 import ArgumentParser
 @preconcurrency import AVFoundation
 import CoreMedia
@@ -315,3 +316,4 @@ enum ListenError: Swift.Error, LocalizedError {
         }
     }
 }
+#endif
