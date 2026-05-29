@@ -22,7 +22,7 @@ struct AppleSpeechBackend: TranscriptionBackend {
         if options.wordTimestamps { args.append("--word-timestamps") }
         args.append(options.detectMusic ? "--detect-music" : "--no-detect-music")
 
-        let result = try await ProcessRunner.run(binary, args)
+        let result = try await ProcessRunner.run(binary, args, onProgress: options.onProgress)
         guard result.exitCode == 0 else {
             throw BackendError.executionFailed(
                 command: "yap transcribe",

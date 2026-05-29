@@ -12,6 +12,7 @@ struct TranscriptionOptions: Sendable {
     var maxLength: Int = 40
     var wordTimestamps: Bool = false
     var detectMusic: Bool = true
+    var onProgress: (@Sendable (Int) -> Void)? = nil
 
     /// Language code (e.g. "en") derived from the locale, or "auto".
     var languageCode: String {
@@ -95,7 +96,13 @@ enum ProcessRunner {
 
     /// Run an executable to completion, draining stdout/stderr concurrently so
     /// large output can't deadlock on a full pipe buffer.
-    static func run(_ executable: URL, _ arguments: [String]) async throws -> Result {
+    /// If `onProgress` is set, stderr is streamed line-by-line; lines matching
+    /// `progress = N` or `progress=N%` call the callback with 0–100.
+    static func run(
+        _ executable: URL,
+        _ arguments: [String],
+        onProgress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> Result {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -115,7 +122,7 @@ enum ProcessRunner {
         }
 
         async let outData = readToEnd(outPipe.fileHandleForReading)
-        async let errData = readToEnd(errPipe.fileHandleForReading)
+        async let errData = readErr(errPipe.fileHandleForReading, onProgress: onProgress)
         let (stdout, stderr) = await (outData, errData)
 
         await waitForExit(process)
@@ -126,6 +133,35 @@ enum ProcessRunner {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 continuation.resume(returning: handle.readDataToEndOfFile())
+            }
+        }
+    }
+
+    private static func readErr(_ handle: FileHandle, onProgress: (@Sendable (Int) -> Void)?) async -> Data {
+        guard let cb = onProgress else { return await readToEnd(handle) }
+        return await streamLines(handle) { line in
+            if let m = line.firstMatch(of: /progress\s*=\s*(\d+)/),
+               let pct = Int(m.1) { cb(min(max(pct, 0), 100)) }
+        }
+    }
+
+    private static func streamLines(_ handle: FileHandle, onLine: @Sendable @escaping (String) -> Void) async -> Data {
+        final class State: @unchecked Sendable { var all = Data(); var buf = Data() }
+        let s = State()
+        return await withCheckedContinuation { continuation in
+            handle.readabilityHandler = { h in
+                let chunk = h.availableData
+                guard !chunk.isEmpty else {
+                    handle.readabilityHandler = nil
+                    continuation.resume(returning: s.all)
+                    return
+                }
+                s.all.append(chunk)
+                s.buf.append(chunk)
+                while let i = s.buf.firstIndex(of: UInt8(ascii: "\n")) {
+                    if let line = String(data: s.buf[..<i], encoding: .utf8) { onLine(line) }
+                    s.buf = Data(s.buf[s.buf.index(after: i)...])
+                }
             }
         }
     }

@@ -140,6 +140,8 @@ import Speech
                 let percent = Int(progress * 100)
                 if useOSCProgress {
                     FileHandle.standardError.write(Data("\u{1b}]9;4;1;\(percent)\u{7}".utf8))
+                } else {
+                    FileHandle.standardError.write(Data("progress=\(percent)\n".utf8))
                 }
                 let preview = String(result.text.characters).trimmingCharacters(in: .whitespaces)
                 let message = "\(formatPrimary("[\(String(format: "%3d%%", percent))]")) \(preview.prefix(terminalColumns - "⠋ [100%] ".count))"
