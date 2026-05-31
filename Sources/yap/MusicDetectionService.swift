@@ -8,6 +8,8 @@ import SoundAnalysis
 nonisolated enum MusicDetectionService {
 
     private static let logger = Logger(subsystem: "com.yap", category: "MusicDetection")
+    private static let markerGlyph = "♪"
+    static let markerText = "[\(markerGlyph) Music]"
 
     // MARK: - Types
 
@@ -88,7 +90,7 @@ nonisolated enum MusicDetectionService {
         let speech = parseSRTEntries(srt).filter { e in
             !ranges.contains { overlaps(e, with: $0) }
         }
-        let music = ranges.map { TimedEntry(start: $0.start, end: $0.end, text: "[Music]") }
+        let music = ranges.map { TimedEntry(start: $0.start, end: $0.end, text: markerText) }
         let entries = (speech + music).sorted { $0.start < $1.start }
         return entries.enumerated().map { i, e in
             "\(i + 1)\n\(srtTime(e.start)) --> \(srtTime(e.end))\n\(e.text)"
@@ -134,7 +136,7 @@ nonisolated enum MusicDetectionService {
         let speech = parseVTTEntries(vtt).filter { e in
             !ranges.contains { overlaps(e, with: $0) }
         }
-        let music = ranges.map { TimedEntry(start: $0.start, end: $0.end, text: "[Music]") }
+        let music = ranges.map { TimedEntry(start: $0.start, end: $0.end, text: markerText) }
         let entries = (speech + music).sorted { $0.start < $1.start }
         let cues = entries.enumerated().map { i, e in
             "\(i + 1)\n\(vttTime(e.start)) --> \(vttTime(e.end))\n\(e.text)"
@@ -207,7 +209,7 @@ nonisolated enum MusicDetectionService {
             return !ranges.contains { overlaps(e, with: $0) }
         }
         for range in ranges {
-            segments.append(["end": range.end, "start": range.start, "text": "[Music]"])
+            segments.append(["end": range.end, "start": range.start, "text": markerText])
         }
         segments.sort {
             let a = ($0["start"] as? Double) ?? (($0["start"] as? NSNumber)?.doubleValue ?? 0)

@@ -43,7 +43,7 @@ import Speech
 
     @Flag(
         inversion: .prefixedNo,
-        help: "Run a music-detection pre-pass and mark music ranges as [Music] in timed output formats (SRT, VTT, JSON). Pass --no-detect-music to disable."
+        help: "Run a music-detection pre-pass and mark music ranges as \(MusicDetectionService.markerText) in timed output formats (SRT, VTT, JSON). Pass --no-detect-music to disable."
     ) var detectMusic: Bool = true
 
     mutating func run() async throws {
