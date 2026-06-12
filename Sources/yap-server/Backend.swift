@@ -12,6 +12,7 @@ struct TranscriptionOptions: Sendable {
     var maxLength: Int = 40
     var wordTimestamps: Bool = false
     var detectMusic: Bool = true
+    var musicSensitivity: String? = nil  // "low", "medium", "high"; nil = backend default
     var onProgress: (@Sendable (Int) -> Void)? = nil
 
     /// Language code (e.g. "en") derived from the locale, or "auto".

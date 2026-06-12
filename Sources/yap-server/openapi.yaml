@@ -69,6 +69,11 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: music_sensitivity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high]
       requestBody:
         description: Audio file (raw upload) or JSON with URL.
         content:
@@ -189,6 +194,9 @@ components:
           type: boolean
         detect_music:
           type: boolean
+        music_sensitivity:
+          type: string
+          enum: [low, medium, high]
       required: [url]
     JobAccepted:
       type: object

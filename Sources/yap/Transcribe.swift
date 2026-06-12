@@ -46,6 +46,10 @@ import Speech
         help: "Run a music-detection pre-pass and mark music ranges as \(MusicDetectionService.markerText) in timed output formats (SRT, VTT, JSON). Pass --no-detect-music to disable."
     ) var detectMusic: Bool = true
 
+    @Option(
+        help: "Music detection sensitivity: low (0.4, catches faint music), medium (0.6, default), high (0.8, only clearly musical passages)."
+    ) var musicSensitivity: MusicSensitivity = .medium
+
     mutating func run() async throws {
         guard FileManager.default.fileExists(atPath: inputFile.path) else {
             throw ValidationError("File not found: \(inputFile.path)")
@@ -108,8 +112,9 @@ import Speech
 
         // Start music detection concurrently so it doesn't add wall-clock latency.
         let fileForMusic = inputFile
+        let musicThreshold = musicSensitivity.threshold
         let musicTask = detectMusic
-            ? Task { await MusicDetectionService.detectMusicRanges(in: fileForMusic) }
+            ? Task { await MusicDetectionService.detectMusicRanges(in: fileForMusic, minimumConfidence: musicThreshold) }
             : nil
 
         let analyzer = SpeechAnalyzer(modules: modules)

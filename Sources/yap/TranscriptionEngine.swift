@@ -12,6 +12,7 @@ enum TranscriptionEngine {
         var maxLength: Int = 40
         var wordTimestamps: Bool = false
         var detectMusic: Bool = true
+        var musicSensitivity: MusicSensitivity = .medium
     }
 
     static func transcribe(
@@ -54,7 +55,7 @@ enum TranscriptionEngine {
         // Music detection runs concurrently with transcription so its ML pass
         // doesn't add wall-clock latency on top of Speech.framework.
         let musicTask = options.detectMusic
-            ? Task { await MusicDetectionService.detectMusicRanges(in: file) }
+            ? Task { await MusicDetectionService.detectMusicRanges(in: file, minimumConfidence: options.musicSensitivity.threshold) }
             : nil
 
         let analyzer = SpeechAnalyzer(modules: modules)

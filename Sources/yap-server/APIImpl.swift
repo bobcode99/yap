@@ -32,42 +32,83 @@ struct APIImpl: APIProtocol {
             return .badRequest(.init(body: .json(.init(error: "Request body is required"))))
         }
 
+        // Phase 1: parse request without doing any I/O so we can log the full
+        // request shape up front, before downloading or streaming audio.
         let backendID: String?
         var options: TranscriptionOptions
         let name: String?
-        let tmpFile: URL
+        let source: String
 
         switch body {
         case let .json(req):
-            guard let sourceURL = URL(string: req.url) else {
+            guard URL(string: req.url) != nil else {
                 return .badRequest(.init(body: .json(.init(error: "Invalid URL: \(req.url)"))))
             }
             backendID = req.backend
             name = req.name
             options = optionsFrom(req: req)
-            do {
-                tmpFile = try await download(sourceURL)
-            } catch {
-                return .badRequest(.init(body: .json(.init(error: "Failed to download audio: \(error.localizedDescription)"))))
-            }
-
-        case let .audio_mpeg(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "mp3")
-        case let .audio_wav(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "wav")
-        case let .audio_mp4(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "mp4")
-        case let .video_mp4(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "mp4")
-        case let .audio_ogg(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "ogg")
-        case let .audio_flac(httpBody):
-            (name, backendID, options, tmpFile) = try await uploadParams(input, body: httpBody, ext: "flac")
+            source = "url=\(req.url)"
+        case .audio_mpeg:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=audio/mpeg"
+        case .audio_wav:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=audio/wav"
+        case .audio_mp4:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=audio/mp4"
+        case .video_mp4:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=video/mp4"
+        case .audio_ogg:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=audio/ogg"
+        case .audio_flac:
+            (name, backendID, options) = parseUploadOptions(input)
+            source = "upload=audio/flac"
         }
 
+        logger.info("request received", metadata: [
+            "source": "\(source)",
+            "backend": "\(backendID ?? registry.defaultID)",
+            "name": "\(name ?? "-")",
+            "format": "\(options.format)",
+            "locale": "\(options.locale ?? "-")",
+            "censor": "\(options.censor)",
+            "max_length": "\(options.maxLength)",
+            "word_timestamps": "\(options.wordTimestamps)",
+            "detect_music": "\(options.detectMusic)",
+            "music_sensitivity": "\(options.musicSensitivity ?? "-")",
+        ])
+
         guard let backend = registry.backend(for: backendID) else {
-            try? FileManager.default.removeItem(at: tmpFile)
             return .badRequest(.init(body: .json(.init(error: "Backend not available: \(backendID ?? registry.defaultID). Available: \(registry.ids.joined(separator: ", "))"))))
+        }
+
+        // Phase 2: materialize the audio (download or stream-to-disk).
+        let tmpFile: URL
+        do {
+            switch body {
+            case let .json(req):
+                let sourceURL = URL(string: req.url)!
+                logger.info("downloading audio", metadata: ["url": "\(sourceURL)"])
+                tmpFile = try await download(sourceURL)
+                logger.info("download complete", metadata: ["url": "\(sourceURL)"])
+            case let .audio_mpeg(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "mp3")
+            case let .audio_wav(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "wav")
+            case let .audio_mp4(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "mp4")
+            case let .video_mp4(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "mp4")
+            case let .audio_ogg(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "ogg")
+            case let .audio_flac(httpBody):
+                tmpFile = try await streamToDisk(httpBody, ext: "flac")
+            }
+        } catch {
+            return .badRequest(.init(body: .json(.init(error: "Failed to read audio: \(error.localizedDescription)"))))
         }
 
         let jobID = UUID().uuidString
@@ -86,6 +127,7 @@ struct APIImpl: APIProtocol {
             defer { semaphore.signal() }
 
             await store.update(jobID, status: .running)
+            logger.info("processing started", metadata: ["job": "\(jobID)", "backend": "\(backend.id)"])
             do {
                 let transcript = try await backend.transcribe(file: tmpFile, options: options)
                 try Task.checkCancellation()
@@ -138,6 +180,7 @@ struct APIImpl: APIProtocol {
         if let m = req.max_length { o.maxLength = m }
         if let w = req.word_timestamps { o.wordTimestamps = w }
         if let d = req.detect_music { o.detectMusic = d }
+        if let s = req.music_sensitivity?.rawValue { o.musicSensitivity = s }
         return o
     }
 
@@ -149,18 +192,15 @@ struct APIImpl: APIProtocol {
         if let m = query.max_length { o.maxLength = m }
         if let w = query.word_timestamps { o.wordTimestamps = w }
         if let d = query.detect_music { o.detectMusic = d }
+        if let s = query.music_sensitivity?.rawValue { o.musicSensitivity = s }
         return o
     }
 
-    private func uploadParams(
-        _ input: Operations.createTranscription.Input,
-        body: HTTPBody,
-        ext: String
-    ) async throws -> (name: String?, backendID: String?, options: TranscriptionOptions, file: URL) {
+    private func parseUploadOptions(
+        _ input: Operations.createTranscription.Input
+    ) -> (name: String?, backendID: String?, options: TranscriptionOptions) {
         let q = input.query
-        let options = optionsFrom(query: q)
-        let file = try await streamToDisk(body, ext: ext)
-        return (q.name, q.backend, options, file)
+        return (q.name, q.backend, optionsFrom(query: q))
     }
 
     private func jobState(id: String, job: JobStore.Job) -> Components.Schemas.JobState {
