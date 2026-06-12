@@ -21,6 +21,9 @@ struct AppleSpeechBackend: TranscriptionBackend {
         if options.censor { args.append("--censor") }
         if options.wordTimestamps { args.append("--word-timestamps") }
         args.append(options.detectMusic ? "--detect-music" : "--no-detect-music")
+        if let sensitivity = options.musicSensitivity {
+            args += ["--music-sensitivity", sensitivity]
+        }
 
         let result = try await ProcessRunner.run(binary, args, onProgress: options.onProgress)
         guard result.exitCode == 0 else {

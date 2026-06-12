@@ -42,6 +42,13 @@ import FoundationNetworking
     @Option(name: .long, help: "faster-whisper compute type, e.g. default, int8, float16.")
     var fasterWhisperComputeType: String = "default"
 
+    @Option(name: .long, help: "Path to the sherpa-onnx-offline binary.")
+    var sherpaOnnxBin: String = ProcessInfo.processInfo.environment["YAP_SHERPA_ONNX_BIN"] ?? "sherpa-onnx-offline"
+    @Option(name: .long, help: "Path to a SenseVoice ONNX model (required to enable the sherpa-onnx backend). Falls back to $YAP_SHERPA_ONNX_SENSE_VOICE_MODEL.")
+    var sherpaOnnxSenseVoiceModel: String?
+    @Option(name: .long, help: "Path to the matching tokens.txt file. Falls back to $YAP_SHERPA_ONNX_TOKENS.")
+    var sherpaOnnxTokens: String?
+
     func run() async throws {
         let logger = Logger(label: "yap-server")
         let registry = buildRegistry(logger: logger)
@@ -114,8 +121,19 @@ import FoundationNetworking
         } else {
             logger.info("faster-whisper unavailable (python or --faster-whisper-model missing)")
         }
+        let resolvedSherpaModel = sherpaOnnxSenseVoiceModel ?? ProcessInfo.processInfo.environment["YAP_SHERPA_ONNX_SENSE_VOICE_MODEL"]
+        let resolvedSherpaTokens = sherpaOnnxTokens ?? ProcessInfo.processInfo.environment["YAP_SHERPA_ONNX_TOKENS"]
+        if let sherpa = SherpaOnnxBackend.probe(
+            binary: sherpaOnnxBin,
+            senseVoiceModel: resolvedSherpaModel,
+            tokens: resolvedSherpaTokens
+        ) {
+            backends[sherpa.id] = sherpa
+        } else {
+            logger.info("sherpa-onnx unavailable (binary, --sherpa-onnx-sense-voice-model, or --sherpa-onnx-tokens missing)")
+        }
 
-        let fallbackOrder = ["apple-speech", "whisper-cpp", "faster-whisper"]
+        let fallbackOrder = ["apple-speech", "whisper-cpp", "faster-whisper", "sherpa-onnx"]
         let resolvedDefault = defaultBackend ?? fallbackOrder.first { backends[$0] != nil } ?? ""
         return BackendRegistry(backends: backends, defaultID: resolvedDefault)
     }

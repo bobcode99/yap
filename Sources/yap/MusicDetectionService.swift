@@ -1,7 +1,24 @@
+import ArgumentParser
 import AVFoundation
 import Foundation
 import OSLog
 import SoundAnalysis
+
+// MARK: - MusicSensitivity
+
+/// Confidence threshold preset for music detection. Lower = more recall (catches
+/// faint music), higher = more precision (only obvious music).
+enum MusicSensitivity: String, Sendable, ExpressibleByArgument, CaseIterable {
+    case low, medium, high
+
+    var threshold: Double {
+        switch self {
+        case .low: 0.4
+        case .medium: 0.6
+        case .high: 0.8
+        }
+    }
+}
 
 // MARK: - MusicDetectionService
 
