@@ -153,6 +153,26 @@ struct APIImpl: APIProtocol {
         return .accepted(.init(body: .json(.init(id: jobID, name: name, status: "queued", backend: backend.id))))
     }
 
+    // MARK: - GET /transcriptions/{id}/events (SSE)
+
+    func streamTranscriptionEvents(_ input: Operations.streamTranscriptionEvents.Input) async throws -> Operations.streamTranscriptionEvents.Output {
+        let id = input.path.id
+        guard await store.get(id) != nil else {
+            return .notFound(.init(body: .json(.init(error: "Job not found"))))
+        }
+        let eventStream = await SSEHandler.eventStream(store: store, id: id)
+        let byteSequence = AsyncStream<ArraySlice<UInt8>> { continuation in
+            let task = Task {
+                for await buffer in eventStream {
+                    continuation.yield(ArraySlice(buffer.readableBytesView))
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+        return .ok(.init(body: .text_event_hyphen_stream(HTTPBody(byteSequence, length: .unknown))))
+    }
+
     // MARK: - GET /transcriptions/{id}
 
     func getTranscription(_ input: Operations.getTranscription.Input) async throws -> Operations.getTranscription.Output {
