@@ -115,6 +115,27 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /transcriptions/{id}/events:
+    get:
+      operationId: streamTranscriptionEvents
+      summary: Stream job status via Server-Sent Events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/Error"
   /transcriptions/{id}:
     get:
       operationId: getTranscription
