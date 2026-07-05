@@ -25,7 +25,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 RUN git clone --depth=1 https://github.com/ggerganov/whisper.cpp.git .
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_EXAMPLES=ON \
+        -DBUILD_SHARED_LIBS=OFF \
     && cmake --build build --target whisper-cli -j
+
+# ---- Build sherpa-onnx-offline ----
+FROM ubuntu:22.04 AS sherpa-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth=1 https://github.com/k2-fsa/sherpa-onnx.git .
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DSHERPA_ONNX_ENABLE_PYTHON=OFF \
+        -DSHERPA_ONNX_ENABLE_TESTS=OFF \
+        -DSHERPA_ONNX_ENABLE_CHECK=OFF \
+        -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
+        -DSHERPA_ONNX_ENABLE_JNI=OFF \
+    && cmake --build build --target sherpa-onnx-offline -j2
 
 # ---- Shared runtime base (no backends) ----
 FROM ubuntu:22.04 AS base
@@ -52,10 +69,7 @@ ENV YAP_FASTER_WHISPER_MODEL=base
 
 # ---- sherpa-onnx only ----
 FROM base AS sherpa-onnx
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip \
-    && pip3 install --no-cache-dir sherpa-onnx \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=sherpa-build /src/build/bin/sherpa-onnx-offline /usr/local/bin/sherpa-onnx-offline
 ENV YAP_SHERPA_ONNX_SENSE_VOICE_MODEL=/models/sherpa/model.onnx \
     YAP_SHERPA_ONNX_TOKENS=/models/sherpa/tokens.txt
 
@@ -63,9 +77,10 @@ ENV YAP_SHERPA_ONNX_SENSE_VOICE_MODEL=/models/sherpa/model.onnx \
 FROM base AS all
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip \
-    && pip3 install --no-cache-dir faster-whisper sherpa-onnx \
+    && pip3 install --no-cache-dir faster-whisper \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=whisper-build /src/build/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=sherpa-build /src/build/bin/sherpa-onnx-offline /usr/local/bin/sherpa-onnx-offline
 ENV YAP_WHISPER_MODEL=/models/whisper/ggml-base.bin \
     YAP_FASTER_WHISPER_MODEL=base \
     YAP_SHERPA_ONNX_SENSE_VOICE_MODEL=/models/sherpa/model.onnx \

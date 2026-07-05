@@ -5,6 +5,7 @@ import Foundation
 /// render to the requested format ourselves since sherpa-onnx only outputs JSON.
 struct SherpaOnnxBackend: TranscriptionBackend {
     let id = "sherpa-onnx"
+    let locales = ["auto", "zh", "en", "ja", "ko", "yue"]
     let binary: URL
     let senseVoiceModel: String
     let tokens: String
@@ -20,12 +21,15 @@ struct SherpaOnnxBackend: TranscriptionBackend {
     }
 
     func transcribe(file: URL, options: TranscriptionOptions) async throws -> String {
+        // sherpa-onnx-offline only reads WAV. Convert via ffmpeg to 16kHz mono.
+        let wav = try await convertToWav(file)
+        defer { try? FileManager.default.removeItem(at: wav) }
         let args = [
             "--sense-voice-model=\(senseVoiceModel)",
             "--tokens=\(tokens)",
             "--sense-voice-language=\(supportedLanguage(options.languageCode))",
             "--sense-voice-use-itn=true",
-            file.path,
+            wav.path,
         ]
         let result = try await ProcessRunner.run(binary, args, onProgress: options.onProgress)
         guard result.exitCode == 0 else {
@@ -160,6 +164,20 @@ struct SherpaOnnxBackend: TranscriptionBackend {
     }
 
     // MARK: - Helpers
+
+    private func convertToWav(_ input: URL) async throws -> URL {
+        guard let ffmpeg = Executable.resolve("ffmpeg") else {
+            throw BackendError.binaryNotFound("ffmpeg")
+        }
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        let args = ["-y", "-i", input.path, "-ar", "16000", "-ac", "1", "-f", "wav", wav.path]
+        let result = try await ProcessRunner.run(ffmpeg, args)
+        guard result.exitCode == 0 else {
+            throw BackendError.executionFailed(command: "ffmpeg", detail: errorDetail(result))
+        }
+        return wav
+    }
 
     private func supportedLanguage(_ code: String) -> String {
         let supported: Set<String> = ["auto", "zh", "en", "ja", "ko", "yue"]

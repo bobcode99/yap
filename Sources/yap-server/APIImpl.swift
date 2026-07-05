@@ -22,7 +22,14 @@ struct APIImpl: APIProtocol {
     // MARK: - GET /backends
 
     func getBackends(_ input: Operations.getBackends.Input) async throws -> Operations.getBackends.Output {
-        .ok(.init(body: .json(.init(backends: registry.ids, _default: registry.defaultID))))
+        let locales = Components.Schemas.BackendsResponse.localesPayload(
+            additionalProperties: registry.locales
+        )
+        return .ok(.init(body: .json(.init(
+            backends: registry.ids,
+            _default: registry.defaultID,
+            locales: locales
+        ))))
     }
 
     // MARK: - POST /transcriptions

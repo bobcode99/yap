@@ -171,7 +171,16 @@ components:
             type: string
         default:
           type: string
-      required: [backends, default]
+        locales:
+          type: object
+          description: |
+            Per-backend list of accepted locale/language codes.
+            Empty array = OS-dependent (e.g. apple-speech resolves at runtime).
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required: [backends, default, locales]
     TranscriptionRequest:
       type: object
       properties:
