@@ -4,6 +4,7 @@ import Foundation
 /// requested format directly to stdout.
 struct FasterWhisperBackend: TranscriptionBackend {
     let id = "faster-whisper"
+    let locales = WhisperLocales.all
     let python: URL
     let script: URL
     let model: String

@@ -11,6 +11,7 @@ import ArgumentParser
             Listen.self,
             Dictate.self,
             ListenAndDictate.self,
+            Locales.self,
             MCP_Command.self,
         ],
         defaultSubcommand: Transcribe.self

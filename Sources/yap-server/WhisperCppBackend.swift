@@ -4,6 +4,7 @@ import Foundation
 /// that we read back.
 struct WhisperCppBackend: TranscriptionBackend {
     let id = "whisper-cpp"
+    let locales = WhisperLocales.all
     let binary: URL
     let model: String
 
