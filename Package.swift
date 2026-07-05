@@ -39,6 +39,7 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/faster_whisper_transcribe.py"),
+                .copy("Resources/index.html"),
                 .copy("openapi.yaml"),
             ],
             plugins: [
