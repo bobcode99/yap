@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>yap — transcribe</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <yap-app></yap-app>
+
+  <script type="module">
+    import { LitElement, html, css } from 'https://esm.run/lit';
+
+    class YapApp extends LitElement {
+      static properties = {
+        backends: { state: true },
+        defaultBackend: { state: true },
+        locales: { state: true },
+        backend: { state: true },
+        mode: { state: true },       // 'file' | 'url'
+        status: { state: true },
+        progress: { state: true },
+        transcript: { state: true },
+        error: { state: true },
+        busy: { state: true },
+      };
+
+      static styles = css`
+        :host { display: block; }
+        form { display: grid; gap: .75rem; }
+        label { display: grid; gap: .25rem; font-weight: 600; font-size: .85rem; }
+        input, select, button, textarea {
+          font: inherit; padding: .5rem; border: 1px solid #8888; border-radius: 6px;
+          background: canvas; color: canvastext;
+        }
+        .row { display: flex; gap: .75rem; flex-wrap: wrap; }
+        .row > label { flex: 1; min-width: 8rem; }
+        button { font-weight: 600; cursor: pointer; }
+        button:disabled { opacity: .5; cursor: default; }
+        .tabs { display: flex; gap: .5rem; }
+        .tabs button { flex: 1; }
+        .tabs button[aria-selected="true"] { outline: 2px solid currentColor; }
+        progress { width: 100%; height: 1rem; }
+        .status { font-weight: 600; }
+        .error { color: #c00; white-space: pre-wrap; }
+        textarea { width: 100%; min-height: 10rem; resize: vertical; }
+      `;
+
+      constructor() {
+        super();
+        this.backends = [];
+        this.locales = {};
+        this.backend = '';
+        this.mode = 'file';
+        this.status = '';
+        this.progress = null;
+        this.transcript = '';
+        this.error = '';
+        this.busy = false;
+      }
+
+      connectedCallback() {
+        super.connectedCallback();
+        this._loadBackends();
+      }
+
+      async _loadBackends() {
+        try {
+          const r = await fetch('/backends');
+          if (!r.ok) throw new Error('GET /backends ' + r.status);
+          const data = await r.json();
+          this.backends = data.backends;
+          this.defaultBackend = data.default;
+          this.locales = data.locales || {};
+          this.backend = data.default;
+        } catch (e) {
+          this.error = 'Failed to load backends: ' + e.message;
+        }
+      }
+
+      get _localeOptions() {
+        return this.locales[this.backend] || [];
+      }
+
+      async _submit(e) {
+        e.preventDefault();
+        this.error = ''; this.transcript = ''; this.status = ''; this.progress = null;
+        const form = e.target;
+        const format = form.format.value;
+        const locale = form.locale.value.trim();
+        const params = new URLSearchParams({ backend: this.backend, format });
+        if (locale) params.set('locale', locale);
+
+        this.busy = true;
+        try {
+          let res;
+          if (this.mode === 'file') {
+            const file = form.file.files[0];
+            if (!file) throw new Error('Pick a file');
+            params.set('name', file.name);
+            res = await fetch('/transcriptions?' + params, {
+              method: 'POST',
+              headers: { 'Content-Type': file.type || 'audio/mpeg' },
+              body: file,
+            });
+          } else {
+            const url = form.url.value.trim();
+            if (!url) throw new Error('Enter a URL');
+            res = await fetch('/transcriptions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url, backend: this.backend, format, ...(locale ? { locale } : {}) }),
+            });
+          }
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+          this._stream(data.id);
+        } catch (e) {
+          this.error = e.message;
+          this.busy = false;
+        }
+      }
+
+      _stream(id) {
+        this.status = 'queued';
+        const es = new EventSource('/transcriptions/' + id + '/events');
+        const done = () => { es.close(); this.busy = false; };
+        es.onmessage = (ev) => {
+          // default (unnamed) events are ignored; we listen to named ones below
+        };
+        for (const name of ['queued', 'running', 'done', 'failed', 'cancelled']) {
+          es.addEventListener(name, (ev) => {
+            const d = JSON.parse(ev.data);
+            this.status = d.status;
+            if (typeof d.progress === 'number') this.progress = d.progress;
+            if (d.status === 'done') { this.transcript = d.transcript || ''; this.progress = 100; done(); }
+            if (d.status === 'failed') { this.error = d.error || 'failed'; done(); }
+            if (d.status === 'cancelled') { done(); }
+          });
+        }
+        es.onerror = () => { if (this.busy) { this.error = 'Stream error'; done(); } };
+      }
+
+      render() {
+        return html`
+          <h1>yap — transcribe</h1>
+          ${this.error ? html`<p class="error">${this.error}</p>` : ''}
+
+          <form @submit=${this._submit}>
+            <label>Backend
+              <select .value=${this.backend} @change=${e => this.backend = e.target.value}>
+                ${this.backends.map(b => html`<option value=${b} ?selected=${b === this.backend}>${b}${b === this.defaultBackend ? ' (default)' : ''}</option>`)}
+              </select>
+            </label>
+
+            <div class="tabs">
+              <button type="button" aria-selected=${this.mode === 'file'} @click=${() => this.mode = 'file'}>Upload file</button>
+              <button type="button" aria-selected=${this.mode === 'url'} @click=${() => this.mode = 'url'}>From URL</button>
+            </div>
+
+            ${this.mode === 'file'
+              ? html`<label>Audio / video file
+                  <input name="file" type="file" accept="audio/*,video/mp4">
+                </label>`
+              : html`<label>Media URL
+                  <input name="url" type="url" placeholder="https://example.com/audio.mp3">
+                </label>`}
+
+            <div class="row">
+              <label>Format
+                <select name="format">
+                  <option value="srt">srt</option>
+                  <option value="vtt">vtt</option>
+                  <option value="txt">txt</option>
+                  <option value="json">json</option>
+                </select>
+              </label>
+              <label>Locale
+                <input name="locale" list="locale-list" placeholder="auto">
+                <datalist id="locale-list">
+                  ${this._localeOptions.map(l => html`<option value=${l}></option>`)}
+                </datalist>
+              </label>
+            </div>
+
+            <button type="submit" ?disabled=${this.busy || !this.backend}>
+              ${this.busy ? 'Transcribing…' : 'Transcribe'}
+            </button>
+          </form>
+
+          ${this.status ? html`
+            <p class="status">Status: ${this.status}</p>
+            ${this.progress != null ? html`<progress max="100" value=${this.progress}></progress>` : ''}
+          ` : ''}
+
+          ${this.transcript ? html`<textarea readonly .value=${this.transcript}></textarea>` : ''}
+        `;
+      }
+    }
+    customElements.define('yap-app', YapApp);
+  </script>
+</body>
+</html>

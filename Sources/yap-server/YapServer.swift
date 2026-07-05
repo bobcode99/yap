@@ -65,6 +65,16 @@ import FoundationNetworking
         let api = APIImpl(store: store, semaphore: semaphore, registry: registry, logger: logger)
         try api.registerHandlers(on: router)
 
+        router.get("/") { _, _ -> Response in
+            let page = Bundle.module.url(forResource: "index", withExtension: "html")
+                .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                ?? "<!-- index.html not bundled -->"
+            return Response(
+                status: .ok,
+                headers: [.contentType: "text/html; charset=utf-8"],
+                body: .init(byteBuffer: .init(string: page))
+            )
+        }
         router.get("/openapi.yaml") { _, _ -> Response in
             let yaml = Bundle.module.url(forResource: "openapi", withExtension: "yaml")
                 .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
