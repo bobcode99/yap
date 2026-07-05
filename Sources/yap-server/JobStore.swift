@@ -31,8 +31,16 @@ actor JobStore {
     private var tasks: [String: Task<Void, Never>] = [:]
     private var subscribers: [String: [UUID: EventContinuation]] = [:]
 
+    // ponytail: cap concurrent SSE streams per job so an untrusted client can't
+    // open unbounded connections. Bump if a real fan-out use case appears.
+    private static let maxSubscribersPerJob = 32
+
     func subscribe(id: String) -> AsyncStream<JobEvent> {
         let (stream, continuation) = AsyncStream<JobEvent>.makeStream()
+        guard (subscribers[id]?.count ?? 0) < Self.maxSubscribersPerJob else {
+            continuation.finish()
+            return stream
+        }
         let subID = UUID()
         subscribers[id, default: [:]][subID] = continuation
         if let job = jobs[id] {

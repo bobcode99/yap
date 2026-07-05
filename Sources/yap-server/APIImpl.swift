@@ -170,7 +170,11 @@ struct APIImpl: APIProtocol {
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
-        return .ok(.init(body: .text_event_hyphen_stream(HTTPBody(byteSequence, length: .unknown))))
+        // no-cache + disable nginx proxy buffering so events flush immediately.
+        return .ok(.init(
+            headers: .init(Cache_hyphen_Control: "no-cache", X_hyphen_Accel_hyphen_Buffering: "no"),
+            body: .text_event_hyphen_stream(HTTPBody(byteSequence, length: .unknown))
+        ))
     }
 
     // MARK: - GET /transcriptions/{id}
