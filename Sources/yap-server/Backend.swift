@@ -26,10 +26,17 @@ struct TranscriptionOptions: Sendable {
 
 protocol TranscriptionBackend: Sendable {
     var id: String { get }
-    /// Locale codes this backend accepts. Empty = accepts any / OS-dependent
-    /// (e.g. apple-speech resolves at runtime from installed assets).
+    /// Locale codes this backend accepts, including ones that may require an
+    /// on-demand asset download before first use. Empty = accepts any / OS-dependent.
     var locales: [String] { get }
+    /// Subset of `locales` that can transcribe right now with no download.
+    /// Defaults to `locales` for backends with no install-on-demand concept.
+    var installedLocales: [String] { get }
     func transcribe(file: URL, options: TranscriptionOptions) async throws -> String
+}
+
+extension TranscriptionBackend {
+    var installedLocales: [String] { locales }
 }
 
 enum BackendError: Error, LocalizedError {
@@ -63,6 +70,10 @@ struct BackendRegistry: Sendable {
 
     var locales: [String: [String]] {
         Dictionary(uniqueKeysWithValues: backends.map { ($0.key, $0.value.locales) })
+    }
+
+    var installedLocales: [String: [String]] {
+        Dictionary(uniqueKeysWithValues: backends.map { ($0.key, $0.value.installedLocales) })
     }
 }
 

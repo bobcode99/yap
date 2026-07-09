@@ -25,10 +25,14 @@ struct APIImpl: APIProtocol {
         let locales = Components.Schemas.BackendsResponse.localesPayload(
             additionalProperties: registry.locales
         )
+        let installedLocales = Components.Schemas.BackendsResponse.installed_localesPayload(
+            additionalProperties: registry.installedLocales
+        )
         return .ok(.init(body: .json(.init(
             backends: registry.ids,
             _default: registry.defaultID,
-            locales: locales
+            locales: locales,
+            installed_locales: installedLocales
         ))))
     }
 

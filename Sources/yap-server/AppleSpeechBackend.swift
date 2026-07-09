@@ -5,19 +5,21 @@ import Foundation
 struct AppleSpeechBackend: TranscriptionBackend {
     let id = "apple-speech"
     let locales: [String]
+    let installedLocales: [String]
     let binary: URL
 
     static func probe(yapBinary: String) -> AppleSpeechBackend? {
         #if os(macOS)
         guard let url = Executable.resolve(yapBinary) else { return nil }
-        return AppleSpeechBackend(locales: fetchLocales(url), binary: url)
+        let (supported, installed) = fetchLocales(url)
+        return AppleSpeechBackend(locales: supported, installedLocales: installed, binary: url)
         #else
         return nil
         #endif
     }
 
-    /// Ask `yap locales` synchronously at probe time. Failure = empty list.
-    private static func fetchLocales(_ binary: URL) -> [String] {
+    /// Ask `yap locales` synchronously at probe time. Failure = empty lists.
+    private static func fetchLocales(_ binary: URL) -> (supported: [String], installed: [String]) {
         let p = Process()
         p.executableURL = binary
         p.arguments = ["locales"]
@@ -28,13 +30,12 @@ struct AppleSpeechBackend: TranscriptionBackend {
             try p.run()
             let data = out.fileHandleForReading.readDataToEndOfFile()
             p.waitUntilExit()
-            guard p.terminationStatus == 0 else { return [] }
-            return String(decoding: data, as: UTF8.self)
-                .split(whereSeparator: \.isNewline)
-                .map { String($0).trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
+            guard p.terminationStatus == 0,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String]]
+            else { return ([], []) }
+            return (obj["supported"] ?? [], obj["installed"] ?? [])
         } catch {
-            return []
+            return ([], [])
         }
     }
 
