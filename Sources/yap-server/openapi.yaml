@@ -202,13 +202,23 @@ components:
         locales:
           type: object
           description: |
-            Per-backend list of accepted locale/language codes.
+            Per-backend list of accepted locale/language codes, including ones
+            that may require an on-demand asset download before first use.
             Empty array = OS-dependent (e.g. apple-speech resolves at runtime).
           additionalProperties:
             type: array
             items:
               type: string
-      required: [backends, default, locales]
+        installed_locales:
+          type: object
+          description: |
+            Per-backend subset of `locales` that can transcribe right now
+            with no download.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required: [backends, default, locales, installed_locales]
     TranscriptionRequest:
       type: object
       properties:
