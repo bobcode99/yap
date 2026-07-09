@@ -63,11 +63,11 @@ struct MCP_Command: AsyncParsableCommand {
 
         await server.withMethodHandler(CallTool.self) { request in
             guard request.name == "transcribe" else {
-                return CallTool.Result(content: [.text("Unknown tool: \(request.name)")], isError: true)
+                return CallTool.Result(content: [.text(text: "Unknown tool: \(request.name)", annotations: nil, _meta: nil)], isError: true)
             }
 
             guard let filePath = request.arguments?["file"]?.stringValue else {
-                return CallTool.Result(content: [.text("Missing required parameter: file")], isError: true)
+                return CallTool.Result(content: [.text(text: "Missing required parameter: file", annotations: nil, _meta: nil)], isError: true)
             }
 
             var options = TranscriptionEngine.Options()
@@ -102,9 +102,9 @@ struct MCP_Command: AsyncParsableCommand {
                     file: URL(fileURLWithPath: filePath),
                     options: options
                 )
-                return CallTool.Result(content: [.text(result)])
+                return CallTool.Result(content: [.text(text: result, annotations: nil, _meta: nil)])
             } catch {
-                return CallTool.Result(content: [.text(error.localizedDescription)], isError: true)
+                return CallTool.Result(content: [.text(text: error.localizedDescription, annotations: nil, _meta: nil)], isError: true)
             }
         }
 

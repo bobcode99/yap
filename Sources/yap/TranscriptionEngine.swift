@@ -1,4 +1,5 @@
 import AVFoundation
+import Foundation
 import Speech
 
 // MARK: - TranscriptionEngine
@@ -10,6 +11,8 @@ enum TranscriptionEngine {
         var outputFormat: OutputFormat = .txt
         var maxLength: Int = 40
         var wordTimestamps: Bool = false
+        var detectMusic: Bool = true
+        var musicSensitivity: MusicSensitivity = .medium
     }
 
     static func transcribe(
@@ -49,6 +52,12 @@ enum TranscriptionEngine {
             }
         }
 
+        // Music detection runs concurrently with transcription so its ML pass
+        // doesn't add wall-clock latency on top of Speech.framework.
+        let musicTask = options.detectMusic
+            ? Task { await MusicDetectionService.detectMusicRanges(in: file, minimumConfidence: options.musicSensitivity.threshold) }
+            : nil
+
         let analyzer = SpeechAnalyzer(modules: modules)
         let audioFile = try AVAudioFile(forReading: file)
         try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
@@ -58,7 +67,20 @@ enum TranscriptionEngine {
             transcript += result.text
         }
 
-        return options.outputFormat.text(for: transcript, maxLength: options.maxLength, locale: options.locale, wordTimestamps: options.wordTimestamps)
+        let rawOutput = options.outputFormat.text(
+            for: transcript,
+            maxLength: options.maxLength,
+            locale: options.locale,
+            wordTimestamps: options.wordTimestamps
+        )
+
+        let musicRanges = await musicTask?.value ?? []
+        guard !musicRanges.isEmpty else { return rawOutput }
+        return MusicDetectionService.injectMusicMarkers(
+            into: rawOutput,
+            format: options.outputFormat,
+            ranges: musicRanges
+        )
     }
 }
 
@@ -68,8 +90,6 @@ enum TranscriptionError: Error, LocalizedError {
     case fileNotFound(String)
     case speechTranscriberNotAvailable
     case unsupportedLocale(String)
-
-    // MARK: Internal
 
     var errorDescription: String? {
         switch self {

@@ -1,0 +1,298 @@
+openapi: "3.1.0"
+info:
+  title: yap-server
+  description: Cross-platform HTTP transcription server with pluggable backends.
+  version: "1.0"
+servers:
+  - url: http://localhost:8080
+    description: Local server
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /backends:
+    get:
+      operationId: getBackends
+      summary: List registered backends
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackendsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /transcriptions:
+    post:
+      operationId: createTranscription
+      summary: Submit a transcription job
+      parameters:
+        - name: backend
+          in: query
+          schema:
+            type: string
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [txt, srt, vtt, json]
+        - name: locale
+          in: query
+          schema:
+            type: string
+        - name: censor
+          in: query
+          schema:
+            type: boolean
+        - name: max_length
+          in: query
+          schema:
+            type: integer
+        - name: word_timestamps
+          in: query
+          schema:
+            type: boolean
+        - name: detect_music
+          in: query
+          schema:
+            type: boolean
+        - name: music_sensitivity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high]
+      requestBody:
+        description: Audio file (raw upload) or JSON with URL.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TranscriptionRequest"
+          audio/mpeg:
+            schema:
+              type: string
+              format: binary
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+          audio/mp4:
+            schema:
+              type: string
+              format: binary
+          video/mp4:
+            schema:
+              type: string
+              format: binary
+          audio/ogg:
+            schema:
+              type: string
+              format: binary
+          audio/flac:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /transcriptions/{id}/events:
+    get:
+      operationId: streamTranscriptionEvents
+      summary: Stream job status via Server-Sent Events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE event stream
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            X-Accel-Buffering:
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/Error"
+  /transcriptions/{id}:
+    get:
+      operationId: getTranscription
+      summary: Poll job status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: cancelTranscription
+      summary: Cancel a queued or running job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Cancelled
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    BackendsResponse:
+      type: object
+      properties:
+        backends:
+          type: array
+          items:
+            type: string
+        default:
+          type: string
+        locales:
+          type: object
+          description: |
+            Per-backend list of accepted locale/language codes, including ones
+            that may require an on-demand asset download before first use.
+            Empty array = OS-dependent (e.g. apple-speech resolves at runtime).
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        installed_locales:
+          type: object
+          description: |
+            Per-backend subset of `locales` that can transcribe right now
+            with no download.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required: [backends, default, locales, installed_locales]
+    TranscriptionRequest:
+      type: object
+      properties:
+        url:
+          type: string
+        name:
+          type: string
+        backend:
+          type: string
+        format:
+          type: string
+          enum: [txt, srt, vtt, json]
+        locale:
+          type: string
+        censor:
+          type: boolean
+        max_length:
+          type: integer
+        word_timestamps:
+          type: boolean
+        detect_music:
+          type: boolean
+        music_sensitivity:
+          type: string
+          enum: [low, medium, high]
+      required: [url]
+    JobAccepted:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        backend:
+          type: string
+      required: [id, status, backend]
+    JobState:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        backend:
+          type: string
+        format:
+          type: string
+        transcript:
+          type: string
+        error:
+          type: string
+        progress:
+          type: integer
+      required: [id, status]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

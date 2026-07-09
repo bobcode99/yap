@@ -1,5 +1,6 @@
 import ArgumentParser
-import NaturalLanguage
+import AVFoundation
+import Foundation
 @preconcurrency import Noora
 import Speech
 
@@ -40,6 +41,15 @@ import Speech
         help: "Include word-level timestamps in JSON output."
     ) var wordTimestamps: Bool = false
 
+    @Flag(
+        inversion: .prefixedNo,
+        help: "Run a music-detection pre-pass and mark music ranges as \(MusicDetectionService.markerText) in timed output formats (SRT, VTT, JSON). Pass --no-detect-music to disable."
+    ) var detectMusic: Bool = true
+
+    @Option(
+        help: "Music detection sensitivity: low (0.4, catches faint music), medium (0.6, default), high (0.8, only clearly musical passages)."
+    ) var musicSensitivity: MusicSensitivity = .medium
+
     mutating func run() async throws {
         guard FileManager.default.fileExists(atPath: inputFile.path) else {
             throw ValidationError("File not found: \(inputFile.path)")
@@ -55,17 +65,17 @@ import Speech
 
         guard SpeechTranscriber.isAvailable else {
             noora.error(.alert("SpeechTranscriber is not available on this device"))
-            throw Error.speechTranscriberNotAvailable
+            throw TranscriptionError.speechTranscriberNotAvailable
         }
 
         let supportedLocales = await SpeechTranscriber.supportedLocales
         guard supportedLocales.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) else {
             noora.error(.alert("Locale \"\(locale.identifier)\" is not supported. Supported locales:\n\(supportedLocales.map(\.identifier))"))
-            throw Error.unsupportedLocale
+            throw TranscriptionError.unsupportedLocale(locale.identifier)
         }
 
-        for locale in await AssetInventory.reservedLocales {
-            await AssetInventory.release(reservedLocale: locale)
+        for loc in await AssetInventory.reservedLocales {
+            await AssetInventory.release(reservedLocale: loc)
         }
         try await AssetInventory.reserve(locale: locale)
 
@@ -100,8 +110,14 @@ import Speech
             }
         }
 
-        let analyzer = SpeechAnalyzer(modules: modules)
+        // Start music detection concurrently so it doesn't add wall-clock latency.
+        let fileForMusic = inputFile
+        let musicThreshold = musicSensitivity.threshold
+        let musicTask = detectMusic
+            ? Task { await MusicDetectionService.detectMusicRanges(in: fileForMusic, minimumConfidence: musicThreshold) }
+            : nil
 
+        let analyzer = SpeechAnalyzer(modules: modules)
         let audioFile = try AVAudioFile(forReading: inputFile)
         let audioFileDuration: TimeInterval = Double(audioFile.length) / audioFile.processingFormat.sampleRate
         try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
@@ -129,6 +145,8 @@ import Speech
                 let percent = Int(progress * 100)
                 if useOSCProgress {
                     FileHandle.standardError.write(Data("\u{1b}]9;4;1;\(percent)\u{7}".utf8))
+                } else {
+                    FileHandle.standardError.write(Data("progress=\(percent)\n".utf8))
                 }
                 let preview = String(result.text.characters).trimmingCharacters(in: .whitespaces)
                 let message = "\(formatPrimary("[\(String(format: "%3d%%", percent))]")) \(preview.prefix(terminalColumns - "⠋ [100%] ".count))"
@@ -139,13 +157,20 @@ import Speech
             FileHandle.standardError.write(Data("\u{1b}]9;4;0\u{7}".utf8))
         }
 
-        let output = outputFormat.text(for: transcript, maxLength: maxLength, locale: locale, wordTimestamps: wordTimestamps)
+        let rawOutput = outputFormat.text(
+            for: transcript,
+            maxLength: maxLength,
+            locale: locale,
+            wordTimestamps: wordTimestamps
+        )
+
+        let musicRanges = await musicTask?.value ?? []
+        let output = musicRanges.isEmpty
+            ? rawOutput
+            : MusicDetectionService.injectMusicMarkers(into: rawOutput, format: outputFormat, ranges: musicRanges)
+
         if let outputFile {
-            try output.write(
-                to: outputFile,
-                atomically: false,
-                encoding: .utf8
-            )
+            try output.write(to: outputFile, atomically: false, encoding: .utf8)
             noora.success(.alert("Transcription written to \(outputFile.path)"))
         }
 
@@ -155,14 +180,10 @@ import Speech
     }
 }
 
-// MARK: Transcribe.Error
-
 extension Transcribe {
     enum Error: Swift.Error, LocalizedError {
         case unsupportedLocale
         case speechTranscriberNotAvailable
-
-        // MARK: Internal
 
         var errorDescription: String? {
             switch self {

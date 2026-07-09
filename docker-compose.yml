@@ -1,0 +1,17 @@
+services:
+  yap-server:
+    build:
+      context: .
+      # Switch backend: whisper-cpp | faster-whisper | sherpa-onnx | all
+      target: all
+    image: yap-server:local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      YAP_WHISPER_MODEL: /models/whisper/ggml-base.bin
+      YAP_FASTER_WHISPER_MODEL: base
+      YAP_SHERPA_ONNX_SENSE_VOICE_MODEL: /models/sherpa/model.onnx
+      YAP_SHERPA_ONNX_TOKENS: /models/sherpa/tokens.txt
+    restart: unless-stopped
