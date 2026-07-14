@@ -32,10 +32,20 @@ enum TranscriptionEngine {
             throw TranscriptionError.unsupportedLocale(options.locale.identifier)
         }
 
-        for locale in await AssetInventory.reservedLocales {
-            await AssetInventory.release(reservedLocale: locale)
+        // AssetInventory is a system-wide resource, not per-process: releasing
+        // "all reserved locales" here can revoke another concurrent `yap`
+        // process's in-flight reservation for the same locale, cancelling its
+        // download. Skip reservation entirely when the locale is already
+        // installed, which is the common case and avoids the race.
+        let installedLocales = await SpeechTranscriber.installedLocales
+        let alreadyInstalled = installedLocales.contains { $0.identifier(.bcp47) == options.locale.identifier(.bcp47) }
+
+        if !alreadyInstalled {
+            for locale in await AssetInventory.reservedLocales {
+                await AssetInventory.release(reservedLocale: locale)
+            }
+            try await AssetInventory.reserve(locale: options.locale)
         }
-        try await AssetInventory.reserve(locale: options.locale)
 
         let transcriber = SpeechTranscriber(
             locale: options.locale,
@@ -45,8 +55,7 @@ enum TranscriptionEngine {
         )
         let modules: [any SpeechModule] = [transcriber]
 
-        let installedLocales = await SpeechTranscriber.installedLocales
-        if !installedLocales.contains(where: { $0.identifier(.bcp47) == options.locale.identifier(.bcp47) }) {
+        if !alreadyInstalled {
             if let request = try await AssetInventory.assetInstallationRequest(supporting: modules) {
                 try await request.downloadAndInstall()
             }
