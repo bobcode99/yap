@@ -46,10 +46,20 @@ struct Dictate: AsyncParsableCommand {
             throw Transcribe.Error.unsupportedLocale
         }
 
-        for locale in await AssetInventory.reservedLocales {
-            await AssetInventory.release(reservedLocale: locale)
+        // AssetInventory is a system-wide resource, not per-process: releasing
+        // "all reserved locales" here can revoke another concurrent `yap`
+        // process's in-flight reservation for the same locale, cancelling its
+        // download. Skip reservation entirely when the locale is already
+        // installed, which is the common case and avoids the race.
+        let installedLocales = await SpeechTranscriber.installedLocales
+        let alreadyInstalled = installedLocales.contains { $0.identifier(.bcp47) == locale.identifier(.bcp47) }
+
+        if !alreadyInstalled {
+            for loc in await AssetInventory.reservedLocales {
+                await AssetInventory.release(reservedLocale: loc)
+            }
+            try await AssetInventory.reserve(locale: locale)
         }
-        try await AssetInventory.reserve(locale: locale)
 
         let transcriber = SpeechTranscriber(
             locale: locale,
@@ -59,8 +69,7 @@ struct Dictate: AsyncParsableCommand {
         )
         let modules: [any SpeechModule] = [transcriber]
 
-        let installedLocales = await SpeechTranscriber.installedLocales
-        if !installedLocales.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
+        if !alreadyInstalled {
             let piped = isatty(STDOUT_FILENO) == 0
             struct DevNull: StandardPipelining { func write(content _: String) {} }
             let noora = if piped {
