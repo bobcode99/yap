@@ -10,6 +10,9 @@ struct WhisperCppBackend: TranscriptionBackend {
 
     static func probe(binary: String, model: String?) -> WhisperCppBackend? {
         guard let model, !model.isEmpty else { return nil }
+        // Registering with a missing model file makes /backends advertise a
+        // backend that fails on every request (e.g. unmounted Docker volume).
+        guard FileManager.default.fileExists(atPath: model) else { return nil }
         guard let url = Executable.resolve(binary) else { return nil }
         return WhisperCppBackend(binary: url, model: model)
     }

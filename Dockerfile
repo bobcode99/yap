@@ -15,7 +15,7 @@ RUN swift build -c release --product yap-server
 RUN BIN_PATH="$(swift build -c release --product yap-server --show-bin-path)" \
     && mkdir -p /out \
     && cp "$BIN_PATH/yap-server" /out/yap-server \
-    && cp -R "$BIN_PATH"/*.resources /out/ 2>/dev/null || true
+    && { cp -R "$BIN_PATH"/*.resources /out/ 2>/dev/null || true; }
 
 # ---- Build whisper-cli ----
 FROM ubuntu:22.04 AS whisper-build

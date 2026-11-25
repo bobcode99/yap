@@ -55,6 +55,9 @@ import FoundationNetworking
         guard !registry.backends.isEmpty else {
             throw ValidationError("No transcription backend available. On macOS install `yap`; otherwise pass --whisper-model and/or --faster-whisper-model with the matching binaries on PATH.")
         }
+        if let requested = defaultBackend, registry.backends[requested] == nil {
+            throw ValidationError("Default backend '\(requested)' failed to probe. Available: \(registry.ids.joined(separator: ", "))")
+        }
 
         let store = JobStore()
         let semaphore = AsyncSemaphore(value: maxConcurrent)

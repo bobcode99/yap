@@ -25,7 +25,9 @@ struct AppleSpeechBackend: TranscriptionBackend {
         p.arguments = ["locales"]
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
+        // Not a Pipe: nothing drains it here, so a chatty child could fill the
+        // buffer, block on write, and hang server startup before it logs.
+        p.standardError = FileHandle.nullDevice
         do {
             try p.run()
             let data = out.fileHandleForReading.readDataToEndOfFile()

@@ -124,6 +124,17 @@ struct SherpaOnnxBackend: TranscriptionBackend {
             if !cur.isEmpty { pieces.append(cur) }
         }
 
+        // Splitting on spaces is a no-op for scripts without interword spaces
+        // (zh, ja, yue, th) — slice anything still over the limit by character.
+        pieces = pieces.flatMap { piece -> [String] in
+            guard piece.count > maxLength else { return [piece] }
+            return stride(from: 0, to: piece.count, by: maxLength).map { offset in
+                let lo = piece.index(piece.startIndex, offsetBy: offset)
+                let hi = piece.index(lo, offsetBy: min(maxLength, piece.count - offset))
+                return String(piece[lo ..< hi])
+            }
+        }
+
         guard !pieces.isEmpty else { return [] }
         let totalChars = max(pieces.map(\.count).reduce(0, +), 1)
         var cursor: TimeInterval = 0

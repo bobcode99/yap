@@ -51,20 +51,24 @@ def main():
         language=args.language,
         word_timestamps=args.word_timestamps,
     )
-    materialized = list(segments)
+    duration = getattr(info, "duration", None)
 
     payload = {
         "backend": "faster-whisper",
         "model": args.model,
         "language": getattr(info, "language", None),
-        "duration": getattr(info, "duration", None),
-        "text": "".join(segment.text for segment in materialized).strip(),
+        "duration": duration,
         "segments": [],
     }
 
-    total = max(len(materialized), 1)
-    for index, segment in enumerate(materialized, start=1):
-        print(f"progress={min(100, int(index / total * 100))}", file=sys.stderr, flush=True)
+    # `segments` is a lazy generator: each step runs inference. Iterate it once
+    # and report as we go — materializing it first would block for the whole
+    # run and then emit 1..100% in a burst at the end.
+    text_parts = []
+    for index, segment in enumerate(segments, start=1):
+        text_parts.append(segment.text)
+        if duration:
+            print(f"progress={min(100, int(segment.end / duration * 100))}", file=sys.stderr, flush=True)
         item = {
             "id": index,
             "start": segment.start,
@@ -78,6 +82,7 @@ def main():
             ]
         payload["segments"].append(item)
 
+    payload["text"] = "".join(text_parts).strip()
     print(render(payload, args.format))
 
 

@@ -52,8 +52,11 @@ struct APIImpl: APIProtocol {
 
         switch body {
         case let .json(req):
-            guard URL(string: req.url) != nil else {
+            guard let url = URL(string: req.url) else {
                 return .badRequest(.init(body: .json(.init(error: "Invalid URL: \(req.url)"))))
+            }
+            if let reason = rejectionReason(for: url) {
+                return .badRequest(.init(body: .json(.init(error: reason))))
             }
             backendID = req.backend
             name = req.name
@@ -256,8 +259,53 @@ struct APIImpl: APIProtocol {
 
 // MARK: - I/O
 
+/// Guard the client-supplied fetch URL. The server is network-facing — the
+/// Docker entrypoint binds 0.0.0.0 and `--api-key` is optional — so an
+/// unfiltered URL is an SSRF vector: `file:///etc/passwd`, cloud metadata at
+/// 169.254.169.254, or any internal host reachable from the server.
+// ponytail: literal-IP check only. Still gets through: hostnames that resolve
+// internally, redirects, and alternate IP spellings (::ffff:127.0.0.1,
+// 2130706433). Resolve with getaddrinfo + vet redirects if that matters.
+private func rejectionReason(for url: URL) -> String? {
+    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+        return "Only http and https URLs are accepted"
+    }
+    guard let host = url.host?.lowercased(), !host.isEmpty else {
+        return "URL has no host"
+    }
+    if host == "localhost" || host.hasSuffix(".localhost") || isInternalAddress(host) {
+        return "Refusing to fetch internal address: \(host)"
+    }
+    return nil
+}
+
+private func isInternalAddress(_ host: String) -> Bool {
+    // URL.host strips the brackets from IPv6 literals. Gate on ":" so domains
+    // like fdroid.org aren't mistaken for unique-local fc00::/7 addresses.
+    if host.contains(":") {
+        return host == "::1" || host == "::" || host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:")
+    }
+    let octets = host.split(separator: ".").compactMap { UInt8($0) }
+    guard octets.count == 4 else { return false }
+    switch (octets[0], octets[1]) {
+    case (0, _), (10, _), (127, _): return true
+    case (169, 254): return true   // link-local, incl. cloud metadata
+    case (172, 16 ... 31): return true
+    case (192, 168): return true
+    default: return false
+    }
+}
+
 private func download(_ sourceURL: URL) async throws -> URL {
-    let (downloaded, _) = try await URLSession.shared.download(from: sourceURL)
+    let (downloaded, response) = try await URLSession.shared.download(from: sourceURL)
+    // URLSession does not throw on 4xx/5xx: without this the error body is
+    // handed to the backend and surfaces as "unable to parse audio".
+    if let http = response as? HTTPURLResponse, !(200 ..< 300).contains(http.statusCode) {
+        try? FileManager.default.removeItem(at: downloaded)
+        throw URLError(.badServerResponse, userInfo: [
+            NSLocalizedDescriptionKey: "HTTP \(http.statusCode) from \(sourceURL.absoluteString)",
+        ])
+    }
     let ext = sourceURL.pathExtension.isEmpty ? "mp3" : sourceURL.pathExtension
     let dest = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)

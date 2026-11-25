@@ -157,12 +157,23 @@ enum ProcessRunner {
             )
         }
 
-        async let outData = readToEnd(outPipe.fileHandleForReading)
-        async let errData = readErr(errPipe.fileHandleForReading, onProgress: onProgress)
-        let (stdout, stderr) = await (outData, errData)
+        // The reads below block until the child closes its pipes, so Task
+        // cancellation (DELETE /transcriptions/{id}) can't unstick them on its
+        // own. Terminate the child instead — its pipes close, the awaits
+        // return, and the caller's concurrency slot is released immediately.
+        struct Box: @unchecked Sendable { let process: Process }
+        let box = Box(process: process)
 
-        await waitForExit(process)
-        return Result(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+        return await withTaskCancellationHandler {
+            async let outData = readToEnd(outPipe.fileHandleForReading)
+            async let errData = readErr(errPipe.fileHandleForReading, onProgress: onProgress)
+            let (stdout, stderr) = await (outData, errData)
+
+            await waitForExit(process)
+            return Result(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+        } onCancel: {
+            if box.process.isRunning { box.process.terminate() }
+        }
     }
 
     private static func readToEnd(_ handle: FileHandle) async -> Data {
