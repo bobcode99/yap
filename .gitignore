@@ -10,3 +10,5 @@ DerivedData/
 # stray local test output
 /*.srt
 /support-locales.json
+/audio-test/
+/bug.log
