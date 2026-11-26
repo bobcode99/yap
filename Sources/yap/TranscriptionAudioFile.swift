@@ -4,9 +4,12 @@ import AVFoundation
 
 /// An audio file prepared for `SpeechAnalyzer`.
 ///
-/// Some MP3 files report one more packet than they can decode. Passing one of
-/// those files directly to `SpeechAnalyzer` ends with `eofErr`, so malformed
-/// MP3s are first normalized to an M4A file.
+/// `SpeechAnalyzer` can fail reading MP3s directly: files that report one more
+/// packet than they decode end with `eofErr`, and long, well-formed MP3s (e.g. a
+/// 101-minute 48 kHz CBR podcast) fail near the end with `nilError`. No cheap
+/// probe catches the second case, so every MP3 is first normalized to M4A.
+// ponytail: export adds ~25% of transcription time on long MP3s (24s for
+// 101 min). Retry-on-failure instead if MP3 latency matters.
 struct TranscriptionAudioFile {
     let audioFile: AVAudioFile
 
@@ -14,9 +17,7 @@ struct TranscriptionAudioFile {
 
     static func prepare(_ url: URL) async throws -> Self {
         let audioFile = try AVAudioFile(forReading: url)
-        guard audioFile.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEGLayer3,
-              try hasMissingFrames(at: url, expectedLength: audioFile.length)
-        else {
+        guard audioFile.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEGLayer3 else {
             return Self(audioFile: audioFile, temporaryURL: nil)
         }
 
@@ -47,30 +48,5 @@ struct TranscriptionAudioFile {
     func removeTemporaryFile() {
         guard let temporaryURL else { return }
         try? FileManager.default.removeItem(at: temporaryURL)
-    }
-
-    private static func hasMissingFrames(
-        at url: URL,
-        expectedLength: AVAudioFramePosition
-    ) throws -> Bool {
-        let frameCount = AVAudioFrameCount(min(expectedLength, 4_096))
-        guard frameCount > 0 else { return false }
-
-        // Use a separate file because probing changes the decoder's position.
-        let probe = try AVAudioFile(forReading: url)
-        probe.framePosition = expectedLength - AVAudioFramePosition(frameCount)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: probe.processingFormat,
-            frameCapacity: frameCount
-        ) else {
-            throw TranscriptionError.audioConversionFailed
-        }
-
-        do {
-            try probe.read(into: buffer, frameCount: frameCount)
-            return buffer.frameLength < frameCount
-        } catch {
-            return true
-        }
     }
 }
